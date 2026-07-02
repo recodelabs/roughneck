@@ -70,6 +70,7 @@ describe("GitHubBackend", () => {
           Authorization: "Bearer tok",
           Accept: "application/vnd.github+json",
         },
+        signal: expect.any(AbortSignal),
       },
     );
     expect(page.content).toBe("# Hello\n\nbody");
@@ -111,6 +112,7 @@ describe("GitHubBackend", () => {
           sha: "abc123",
           branch: "main",
         }),
+        signal: expect.any(AbortSignal),
       },
     );
     expect(page?.version).toBe("def456");
@@ -181,6 +183,7 @@ describe("GitHubBackend", () => {
           Authorization: "Bearer tok",
           Accept: "application/vnd.github+json",
         },
+        signal: expect.any(AbortSignal),
       },
     );
     // .md/.json/.yaml/.txt/.fsh are listed; .png and .ts are skipped.
@@ -384,6 +387,7 @@ describe("GitHubBackend", () => {
             Authorization: "Bearer tok",
             Accept: "application/vnd.github+json",
           },
+          signal: expect.any(AbortSignal),
         },
       );
       expect(content).toBe("# Old\n\nbody");
@@ -859,6 +863,7 @@ describe("GitHubBackend", () => {
             content: b64("# Untitled\n"),
             branch: "main",
           }),
+          signal: expect.any(AbortSignal),
         },
       );
       expect(page?.version).toBe("new1");
@@ -1162,6 +1167,51 @@ describe("GitHubBackend", () => {
     );
 
     expect(seen).toEqual([1, 2]);
+    vi.useRealTimers();
+  });
+
+  it("watchActivityLog skips a tick while the previous request is still in flight", async () => {
+    vi.useFakeTimers();
+    // A fetch that stays pending until we release it, so the baseline tick is
+    // still outstanding when the next interval fires.
+    let releaseFetch: (() => void) | null = null;
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          releaseFetch = () =>
+            resolve(
+              new Response(
+                JSON.stringify({
+                  sha: "s",
+                  content: b64(""),
+                  encoding: "base64",
+                }),
+                { status: 200 },
+              ),
+            );
+        }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const stop = backend().watchActivityLog("doc.md", () => {});
+
+    // Immediate baseline tick issues one request that stays pending.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Two intervals fire while the first tick is still outstanding: both skip,
+    // so no extra concurrent request piles up.
+    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Once the in-flight request settles, the next interval issues a fresh one.
+    releaseFetch?.();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    stop();
     vi.useRealTimers();
   });
 

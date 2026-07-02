@@ -552,8 +552,15 @@ export class GitHubBackend implements StorageBackend {
   ): () => void {
     let disposed = false;
     let lastSig: string | null = null;
+    // Guard against poll pile-up: if a tick runs slow (or hangs), the interval
+    // keeps firing. Without this, successive ticks would stack unbounded
+    // concurrent requests against the same doc. Skip a tick while one is still
+    // outstanding so at most one activity request is in flight at a time.
+    let inFlight = false;
 
     const tick = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const entries = await this.readActivityLog(docPath);
         if (disposed) return;
@@ -564,6 +571,8 @@ export class GitHubBackend implements StorageBackend {
         }
       } catch (error) {
         console.error("activity-log poll failed:", error);
+      } finally {
+        inFlight = false;
       }
     };
 

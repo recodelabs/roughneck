@@ -199,6 +199,50 @@ export function buildSuggestionInputTransaction(
 }
 
 /**
+ * Build a transaction that flags an already-inserted range `[from, to)` as a
+ * suggested addition. Used for insertions that cannot flow through
+ * {@link buildSuggestionInputTransaction} because the content is applied
+ * out-of-band: the context-menu "Paste Markdown" action inserts rich HTML, and
+ * IME/composition input is committed by the browser on `compositionend` without
+ * ever reaching `handleTextInput`.
+ *
+ * Runs already carrying an addition / substitution-new mark are left untouched
+ * so we never re-mint change ids or double-mark; only original or unmarked runs
+ * receive a reused (adjacent) or fresh addition mark. Returns an unchanged
+ * transaction when the range is collapsed or already fully marked, so callers
+ * can guard on `tr.docChanged`.
+ */
+export function buildSuggestionMarkAdditionTransaction(
+  state: EditorState,
+  range: { from: number; to: number },
+  ctx: SuggestionContext,
+): Transaction {
+  const { from, to } = range;
+  const { markType } = ctx;
+  const tr = state.tr;
+
+  if (from >= to) return tr;
+
+  const segments = collectSuggestionSegments(state.doc, from, to, markType);
+  // Reuse one mark across every gap: an adjacent addition if present, otherwise
+  // a single fresh addition so the whole insertion shares one change id.
+  const mark =
+    findReusableInputMark(state.doc, from, markType) ??
+    markType.create(
+      createCriticChange("addition", ctx.changeAttrs, {
+        existingChanges: ctx.existingChanges,
+      }),
+    );
+
+  for (const seg of segments) {
+    if (seg.isAddition) continue;
+    tr.addMark(seg.from, seg.to, mark);
+  }
+
+  return tr;
+}
+
+/**
  * Build the transaction for deleting `[from, to)` in suggesting mode — the
  * shared engine behind cut and backspace/delete. Addition / substitution-new
  * segments are truly removed; original segments get a deletion mark.

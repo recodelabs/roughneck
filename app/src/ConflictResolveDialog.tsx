@@ -82,6 +82,17 @@ export function ConflictResolveDialog({
   );
   const [saving, setSaving] = useState(false);
 
+  // A second concurrent save can re-render this same instance with a fresh
+  // `regions` set. The `useState` initializer above only runs on mount, so
+  // reset choices to the new conflicts' defaults whenever `regions` changes —
+  // otherwise resolveRegions would apply stale picks to the wrong regions and
+  // silently drop a merge side. (React's "adjust state during render" pattern.)
+  const [prevRegions, setPrevRegions] = useState(regions);
+  if (prevRegions !== regions) {
+    setPrevRegions(regions);
+    setChoices(conflicts.map(() => "ours"));
+  }
+
   const setChoice = (index: number, choice: ConflictChoice) => {
     setChoices((prev) => {
       const next = [...prev];

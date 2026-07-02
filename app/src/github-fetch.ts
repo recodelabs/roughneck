@@ -22,6 +22,67 @@ import {
 const MAX_AUTO_RETRY_SECONDS = 5;
 
 /**
+ * Per-request timeout. A stalled socket (no response, no error) would otherwise
+ * hang a save/read/poll forever; after this we abort the request so it rejects
+ * with a clear, catchable error instead.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Combine several abort signals into one that fires as soon as any input does,
+ * carrying that input's `reason`. Used to layer our timeout on top of any
+ * caller-supplied `init.signal` without clobbering it (prefers the platform
+ * `AbortSignal.any` when available). The listeners are `once` and the returned
+ * controller is short-lived, so nothing needs explicit teardown.
+ */
+function combineSignals(signals: AbortSignal[]): AbortSignal {
+  const maybeAny = (
+    AbortSignal as unknown as {
+      any?: (signals: AbortSignal[]) => AbortSignal;
+    }
+  ).any;
+  if (typeof maybeAny === "function") return maybeAny(signals);
+
+  const controller = new AbortController();
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      break;
+    }
+    signal.addEventListener("abort", () => controller.abort(signal.reason), {
+      once: true,
+    });
+  }
+  return controller.signal;
+}
+
+/**
+ * `fetch` with a hard timeout. Aborts after {@link REQUEST_TIMEOUT_MS} so a hung
+ * connection rejects (with a clear error) rather than hanging forever. Any
+ * `init.signal` the caller passed is composed with the timeout signal, so an
+ * external cancel still works and isn't overwritten.
+ */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  const timeoutController = new AbortController();
+  const timer = setTimeout(() => {
+    timeoutController.abort(
+      new Error(`GitHub request timed out after ${REQUEST_TIMEOUT_MS}ms`),
+    );
+  }, REQUEST_TIMEOUT_MS);
+  const signal = init.signal
+    ? combineSignals([timeoutController.signal, init.signal])
+    : timeoutController.signal;
+  try {
+    return await fetch(url, { ...init, signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Inspect a response for GitHub rate-limiting. Returns `null` for anything
  * that isn't a rate limit — a plain 403 (e.g. missing permission) is left to
  * the caller's normal error handling.
@@ -69,7 +130,7 @@ export async function githubFetch(
   url: string,
   init: RequestInit,
 ): Promise<Response> {
-  const res = await fetch(url, init);
+  const res = await fetchWithTimeout(url, init);
   if (res.status === 401) throw new SessionExpiredError(res.status);
   const limit = parseRateLimit(res);
   if (!limit) return res;
@@ -79,7 +140,7 @@ export async function githubFetch(
     limit.retryAfterSeconds <= MAX_AUTO_RETRY_SECONDS
   ) {
     await delay(limit.retryAfterSeconds * 1000);
-    const retried = await fetch(url, init);
+    const retried = await fetchWithTimeout(url, init);
     const retryLimit = parseRateLimit(retried);
     if (!retryLimit) return retried;
     throw new GitHubRateLimitError(retryLimit);
