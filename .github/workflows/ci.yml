@@ -29,6 +29,17 @@ jobs:
       - name: Typecheck
         run: npx tsc -b
 
+      - name: Typecheck lib/, auth/, functions/
+        run: npx tsc -p ../tsconfig.json
+
+      - name: Lint lib/, auth/, functions/ (Biome)
+        # Biome scopes its project root to the working directory, so this must
+        # run from the repo root (not app/) for ../lib etc. to resolve against
+        # the root biome.json — invoked via app's installed binary directly to
+        # avoid `npx biome` from the repo root resolving a squatted package.
+        working-directory: ${{ github.workspace }}
+        run: app/node_modules/.bin/biome check lib auth functions
+
       - name: Test with coverage
         run: npx vitest run --coverage
 

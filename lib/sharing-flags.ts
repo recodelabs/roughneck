@@ -15,17 +15,6 @@ function frontmatterBlock(markdown: string): string | null {
 }
 
 /**
- * YAML 1.2 core-schema boolean-`true` literals. The app decides visibility with
- * `parseYaml(frontmatter).public === true`, and the core schema only coerces
- * these three spellings to boolean `true` — `yes`, `on`, `1`, and quoted
- * `"true"` are strings, so they must NOT count. Matching this exactly is what
- * keeps the server from serving a doc the owner's UI still calls private.
- */
-function isYamlTrue(value: string): boolean {
-  return value === "true" || value === "True" || value === "TRUE";
-}
-
-/**
  * Cheap "does this block obviously fail to parse" guard. The app parses the
  * WHOLE frontmatter and fails closed (every flag false) on ANY YAML error, so
  * reading an individual `public: true` line out of an otherwise-broken block

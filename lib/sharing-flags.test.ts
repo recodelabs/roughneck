@@ -36,9 +36,9 @@ describe("readSharingFlags", () => {
   it("accepts YAML boolean-true spellings and tolerates trailing spaces/comments", () => {
     // `true`/`True`/`TRUE` are the only core-schema booleans; a trailing `#`
     // comment (after whitespace) is fine.
-    expect(readSharingFlags("---\npublic:   TRUE  # opt in\n---\n").public).toBe(
-      true,
-    );
+    expect(
+      readSharingFlags("---\npublic:   TRUE  # opt in\n---\n").public,
+    ).toBe(true);
     expect(readSharingFlags("---\npublic: True\n---\n").public).toBe(true);
   });
 

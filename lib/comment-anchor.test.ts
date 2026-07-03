@@ -57,9 +57,7 @@ describe("selectionOccurrence", () => {
       atIso: "2026-06-18T00:00:00.000Z",
     });
     // Should wrap the SECOND cat
-    expect(out).toContain(
-      'The cat sat. The {==cat==}{>>which one?<<}{id="g1"',
-    );
+    expect(out).toContain('The cat sat. The {==cat==}{>>which one?<<}{id="g1"');
   });
 
   it("round-trip with markup: skips the markup cat and wraps the plain one", () => {

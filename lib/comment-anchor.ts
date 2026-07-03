@@ -8,9 +8,7 @@
  *  frontmatter fence, or 0 when no frontmatter is present).
  */
 export function bodyStart(markdown: string): number {
-  const m = markdown.match(
-    /^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/,
-  );
+  const m = markdown.match(/^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/);
   return m ? m[0].length : 0;
 }
 
@@ -71,9 +69,7 @@ export function selectionOccurrence(
     const matchEnd = bodyIdx + quote.length;
 
     // Skip matches that overlap existing markup regions
-    const inMarkup = regions.some(
-      (r) => bodyIdx < r.end && matchEnd > r.start,
-    );
+    const inMarkup = regions.some((r) => bodyIdx < r.end && matchEnd > r.start);
 
     if (!inMarkup) {
       if (absIdx < selectionStart) {

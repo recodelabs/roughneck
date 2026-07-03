@@ -1,5 +1,8 @@
 // lib/insert-public-comment.ts
-import { bodyStart as computeBodyStart, criticRegions as computeCriticRegions } from "./comment-anchor";
+import {
+  bodyStart as computeBodyStart,
+  criticRegions as computeCriticRegions,
+} from "./comment-anchor";
 
 export interface NewCommentInput {
   mode: "new";
@@ -44,7 +47,7 @@ function rejectCriticDelimiters(text: string): void {
 // name should be sanitized, not cause the guest's comment to fail. Length is
 // bounded by callers (MAX_NAME_LEN in lib/public-comment.ts).
 function sanitizeAuthorName(authorName: string): string {
-  // eslint-disable-next-line no-control-regex
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — this range IS the control-char set we strip from guest input.
   return authorName.replace(/[\x00-\x1F\x7F]/g, "");
 }
 
