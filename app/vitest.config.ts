@@ -15,7 +15,7 @@ export default defineConfig({
   test: {
     coverage: {
       provider: "v8",
-      reportsDirectory: "../../coverage/app",
+      reportsDirectory: "../coverage/app",
       exclude: [
         "dist/**",
         "test/**",

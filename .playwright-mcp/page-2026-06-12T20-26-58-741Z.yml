@@ -1,4 +1,0 @@
-- generic [ref=e2]:
-  - main [ref=e3]
-  - button "Switch to dark mode" [ref=e4]:
-    - img [ref=e5]
