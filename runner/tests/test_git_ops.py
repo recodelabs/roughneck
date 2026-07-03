@@ -173,6 +173,53 @@ class TestGitOps(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             self.git.pull("main")
 
+    def test_reset_hard_to_origin_discards_local_divergence(self):
+        # A bare "origin" plus a second clone that races us (the hosted app)
+        # and pushes first. Meanwhile our local clone has BOTH an unpushed
+        # local commit and a dirty uncommitted edit — reset_hard_to_origin
+        # must discard both and land exactly on origin's tip with a clean tree.
+        import shutil
+
+        origin = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, origin, ignore_errors=True)
+        _run(origin, "git", "init", "-q", "--bare")
+        _run(self.clone, "git", "branch", "-M", "main")
+        _run(self.clone, "git", "remote", "add", "origin", origin)
+        _run(self.clone, "git", "push", "-q", "-u", "origin", "main")
+
+        other = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, other, ignore_errors=True)
+        _run(other, "git", "clone", "-q", origin, ".")
+        _run(other, "git", "config", "user.email", "o@o.o")
+        _run(other, "git", "config", "user.name", "o")
+        Path(other, "a.md").write_text("# Hi\nfrom the app\n")
+        _run(other, "git", "add", "-A")
+        _run(other, "git", "commit", "-q", "-m", "app edit")
+        _run(other, "git", "push", "-q", "origin", "main")  # origin advances
+
+        # Local diverges: an unpushed local commit PLUS a dirty uncommitted edit.
+        self.git.write_file("a.md", "# Hi\nfrom the agent (unpushed)\n")
+        self.git.commit(["a.md"], "agent local-only commit")
+        Path(self.clone, "a.md").write_text("dirty uncommitted garbage\n")
+
+        self.git.reset_hard_to_origin("main")
+
+        local_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=self.clone,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        origin_head = subprocess.run(
+            ["git", "rev-parse", "main"], cwd=origin,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertEqual(local_head, origin_head)
+        self.assertEqual(self.git.read_file("a.md"), "# Hi\nfrom the app\n")
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=self.clone,
+            capture_output=True, text=True, check=True,
+        ).stdout
+        self.assertEqual(status, "")
+
     def test_try_push_and_fetch_and_merge_reconcile_divergence(self):
         # A bare "origin" plus a second clone that races us (the hosted app).
         import shutil

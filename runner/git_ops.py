@@ -58,6 +58,15 @@ class GitOps:
             self._git("merge", "--abort")
             raise MergeConflict(str(exc)) from exc
 
+    def reset_hard_to_origin(self, branch: str) -> None:
+        """Fetch origin and hard-reset the local branch to it, discarding any
+        local commits and working-tree changes. Used to recover from an
+        unresolvable merge conflict by making origin the source of truth;
+        safe here because the runner's clone is disposable and origin is
+        the durable copy."""
+        self._git("fetch", "origin", branch)
+        self._git("reset", "--hard", f"origin/{branch}")
+
     def push(self, branch: str) -> None:
         self._git("push", "origin", branch)
 

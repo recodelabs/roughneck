@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import sys
 import time
+import traceback
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
 
 from runner.config import Config, load_config
-from runner.git_ops import GitOps
+from runner.git_ops import GitOps, MergeConflict
 from runner.margins_log import (
     append_activity_line,
     build_reply_entry,
@@ -69,7 +70,25 @@ def _append_reply(git, log_path: str, reply: dict, branch: str) -> None:
 
 def process_one(deps: Deps, config: Config) -> bool:
     """Handle at most one pending instruction. Return True if one was handled."""
-    deps.git.pull(config.branch)
+    # Best-effort flush of any commits stranded by a prior failed push
+    # (RUN-4). Non-raising: try_push already returns False on rejection, and
+    # if it fails here the pull + reconcile ladder below sorts it out later.
+    deps.git.try_push(config.branch)
+
+    try:
+        deps.git.pull(config.branch)
+    except MergeConflict:
+        # A real content conflict: never wedge the loop retrying the same
+        # doomed merge (RUN-2/6). Origin is the source of truth on this
+        # disposable clone — reset to it and let the next cycle re-pick any
+        # still-pending instruction. No reply is fabricated here.
+        deps.git.reset_hard_to_origin(config.branch)
+        print(
+            f"[runner] merge conflict pulling {config.branch}; "
+            "reset local clone to origin and will retry next cycle",
+            file=sys.stderr,
+        )
+        return False
 
     found = _first_pending(deps.git)
     if found is None:
@@ -160,8 +179,8 @@ def run_forever(deps: Deps, config: Config) -> None:  # pragma: no cover - thin 
     while True:
         try:
             handled = process_one(deps, config)
-        except Exception as exc:  # keep the loop alive; surface the error
-            print(f"[runner] error: {exc}", file=sys.stderr)
+        except Exception:  # keep the loop alive; surface the full traceback
+            print(f"[runner] error:\n{traceback.format_exc()}", file=sys.stderr)
             handled = False
         if not handled:
             deps.sleep(config.poll_seconds)
