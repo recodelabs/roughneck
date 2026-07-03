@@ -61,7 +61,10 @@ export const onRequestPost: (ctx: {
         headers: { "Content-Type": "application/json", ...noStore },
       });
     } catch (e) {
-      return new Response(e instanceof Error ? e.message : String(e), {
+      // Log the detail server-side for diagnosis, but never echo it to the
+      // client — the thrown message can embed OAuth response internals.
+      console.error("Token exchange failed:", e);
+      return new Response("Token exchange failed", {
         status: 500,
         headers: noStore,
       });
