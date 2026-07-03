@@ -57,10 +57,12 @@ Vite starts at **`http://localhost:5173`** by default.
 
 1. Open `http://localhost:5173`.
 2. Click **Login with GitHub** — you are redirected to GitHub for authorization.
-3. GitHub redirects back to `/api/auth/callback`. The dev middleware exchanges the `code`
-   for a user token (keeping the client secret server-side) and passes the token to the
-   SPA in the URL fragment. The token is stored in `sessionStorage` (tab-scoped) and the
-   fragment is immediately stripped from the address bar.
+3. GitHub redirects back to `/api/auth/callback`. The dev middleware forwards the single-use
+   `code` (and `state`) to the SPA via a `/?code=...&state=...` redirect — never the token.
+   The SPA verifies `state`, then exchanges the `code` for a user token with a same-origin
+   `POST /api/auth/token` (keeping the client secret server-side). The token is returned in
+   the JSON response body, stored in `sessionStorage` (tab-scoped), and the `code`/`state`
+   query params are stripped from the address bar.
 4. The **repo picker** appears. Enter `owner/repo` and a branch; the app lists all `.md`
    files in that repo tree.
 5. Click a file — its URL becomes `/?repo=<owner>/<name>&ref=<branch>&path=<file.md>`.
@@ -84,8 +86,9 @@ GitHub App OAuth, entirely stateless on the server side:
 | Step | What happens |
 |------|-------------|
 | `/api/auth/login` | Server 302s to `https://github.com/login/oauth/authorize` with your Client ID and a `state` nonce. |
-| `/api/auth/callback` | Server receives the `code`, calls GitHub to exchange it for a user access token (Client secret never leaves the server), then 302s to `/#token=<token>`. |
-| SPA | Reads the fragment, stores the token in `sessionStorage`, strips the fragment. All subsequent GitHub API calls (reads, tree listing, commits) are made directly from the browser using `Authorization: Bearer <token>`. |
+| `/api/auth/callback` | Server receives the `code` and `state` from GitHub and 302s to `/?code=<code>&state=<state>` — the single-use code is forwarded to the SPA, never an access token. |
+| `POST /api/auth/token` | SPA verifies `state` matches what it generated, then POSTs the `code` here (same-origin). Server exchanges it with GitHub for a user access token (Client secret never leaves the server) and returns it in the JSON response body. |
+| SPA | Stores the token in `sessionStorage` and strips `code`/`state` from the URL. All subsequent GitHub API calls (reads, tree listing, commits) are made directly from the browser using `Authorization: Bearer <token>`. |
 
 Comments and commits are attributed to your GitHub username (fetched once from
 `GET /user` after login).

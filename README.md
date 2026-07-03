@@ -14,22 +14,22 @@ set of quality-of-life enhancements layered on top:
 - **Reliability fixes** for Roughdraft's SPA routing (deep-link reloads, URL flip-flop).
 - One server **per folder**, network-exposed (`0.0.0.0`) so other devices on your LAN can review.
 
-> **Note on the name:** the GitHub repository is still `recodelabs/roughneck`; the project (CLI,
-> assets, and hosted app) has been renamed to **margins**. The clone URLs below intentionally keep
-> the current repo path until the repository itself is renamed.
+> **Note on the name:** the project (repo, CLI, assets, and hosted app) was formerly named
+> `roughneck`; it has since been renamed to **margins**, and the GitHub repository itself is now
+> `recodelabs/margins`.
 
 ## Install
 
 Requires `node`, `jq`, `curl`, and a global Roughdraft install (`npm i -g roughdraft`).
 
 ```bash
-git clone https://github.com/recodelabs/roughneck.git
-ln -sf "$PWD/roughneck/margins" /opt/homebrew/bin/margins   # or anywhere on your PATH
+git clone https://github.com/recodelabs/margins.git
+ln -sf "$PWD/margins/margins" /opt/homebrew/bin/margins   # or anywhere on your PATH
 ```
 
 > Upgrading from the old `roughneck` CLI? This is a clean break — there is no `roughneck` alias.
 > Re-point your symlink at the renamed binary and drop the old one:
-> `ln -sf "$PWD/roughneck/margins" /opt/homebrew/bin/margins && rm -f /opt/homebrew/bin/roughneck`.
+> `ln -sf "$PWD/margins/margins" /opt/homebrew/bin/margins && rm -f /opt/homebrew/bin/roughneck`.
 
 ## Usage
 
@@ -48,8 +48,8 @@ margins enhance                                    # (re)apply the in-browser en
 ## How it works
 
 `margins` is a thin shell wrapper around Roughdraft's own server (`child.js`), plus a set of
-**patches applied to the installed Roughdraft** on every run (idempotent, re-applied after upgrades,
-with `.margins-bak` backups):
+**patches applied to the installed Roughdraft** on every run (idempotent, re-applied after
+upgrades, in place — no backup files):
 
 | Patch | Target | Why |
 |---|---|---|
@@ -178,7 +178,7 @@ directly back to the doc's branch. All agent↔human communication happens in th
 Install it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/recodelabs/roughneck/main/skills/margins/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/recodelabs/margins/main/skills/margins/install.sh | bash
 ```
 
-or as a plugin: `/plugin marketplace add recodelabs/roughneck` then `/plugin install margins@margins`.
+or as a plugin: `/plugin marketplace add recodelabs/margins` then `/plugin install margins@margins`.
