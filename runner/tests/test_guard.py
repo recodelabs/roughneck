@@ -21,12 +21,33 @@ class TestEnforce(unittest.TestCase):
         os.makedirs(self.state)
         self.doc = os.path.join(self.clone, "a.md")
         open(self.doc, "w").close()
+        self.other_doc = os.path.join(self.clone, "other.md")
+        open(self.other_doc, "w").close()
 
     def tearDown(self):
         self._tmp.cleanup()
 
     def _enforce(self, tool, tool_input):
         return enforce(tool, tool_input, self.clone, self.state)
+
+    def _write_inbox(self, doc_path, raw=None):
+        """Write state/inbox.json. Pass `raw` (a string) to write malformed
+        content directly; otherwise writes a well-formed inbox naming
+        `doc_path` (relative to the clone) as the docPath."""
+        inbox_path = os.path.join(self.state, "inbox.json")
+        with open(inbox_path, "w", encoding="utf-8") as f:
+            if raw is not None:
+                f.write(raw)
+            else:
+                json.dump(
+                    {
+                        "instructionId": "abc123",
+                        "docPath": doc_path,
+                        "type": "rewrite",
+                        "instruction": "do the thing",
+                    },
+                    f,
+                )
 
     def test_read_doc_in_clone_allowed(self):
         decision, _ = self._enforce("Read", {"file_path": self.doc})
@@ -42,9 +63,87 @@ class TestEnforce(unittest.TestCase):
         decision, _ = self._enforce("Read", {"file_path": os.path.join(self.state, "inbox.json")})
         self.assertEqual(decision, "allow")
 
-    def test_edit_doc_allowed(self):
+    def test_edit_inbox_doc_allowed(self):
+        # Edit is allowed on the doc named by inbox.json's docPath.
+        self._write_inbox("a.md")
         decision, _ = self._enforce("Edit", {"file_path": self.doc})
         self.assertEqual(decision, "allow")
+
+    def test_write_inbox_doc_allowed(self):
+        self._write_inbox("a.md")
+        decision, _ = self._enforce("Write", {"file_path": self.doc})
+        self.assertEqual(decision, "allow")
+
+    def test_edit_different_doc_in_clone_denied(self):
+        # The core new enforcement: even though other_doc is inside the
+        # clone, it's not the doc named in inbox.json, so Edit is denied.
+        self._write_inbox("a.md")
+        decision, _ = self._enforce("Edit", {"file_path": self.other_doc})
+        self.assertEqual(decision, "deny")
+
+    def test_write_different_doc_in_clone_denied(self):
+        self._write_inbox("a.md")
+        decision, _ = self._enforce("Write", {"file_path": self.other_doc})
+        self.assertEqual(decision, "deny")
+
+    def test_read_other_doc_in_clone_still_allowed(self):
+        # Reads are lookups and stay clone-wide even with an inbox set.
+        self._write_inbox("a.md")
+        decision, _ = self._enforce("Read", {"file_path": self.other_doc})
+        self.assertEqual(decision, "allow")
+
+    def test_write_denied_when_inbox_absent(self):
+        # No inbox.json at all -> the doc target can't be determined -> fail
+        # closed and deny writes to the clone (state dir writes still allowed
+        # elsewhere).
+        decision, _ = self._enforce("Edit", {"file_path": self.doc})
+        self.assertEqual(decision, "deny")
+
+    def test_write_denied_when_inbox_malformed_json(self):
+        self._write_inbox(None, raw="{not valid json")
+        decision, _ = self._enforce("Edit", {"file_path": self.doc})
+        self.assertEqual(decision, "deny")
+
+    def test_write_denied_when_inbox_docpath_missing(self):
+        self._write_inbox(None, raw=json.dumps({"instructionId": "x"}))
+        decision, _ = self._enforce("Edit", {"file_path": self.doc})
+        self.assertEqual(decision, "deny")
+
+    def test_write_denied_when_inbox_docpath_empty_string(self):
+        self._write_inbox("")
+        decision, _ = self._enforce("Edit", {"file_path": self.doc})
+        self.assertEqual(decision, "deny")
+
+    def test_write_denied_when_inbox_docpath_non_str(self):
+        self._write_inbox(None, raw=json.dumps({"docPath": 123}))
+        decision, _ = self._enforce("Edit", {"file_path": self.doc})
+        self.assertEqual(decision, "deny")
+
+    def test_write_denied_when_inbox_docpath_escapes_clone(self):
+        # A docPath containing ".." that resolves outside the clone must not
+        # widen writes to wherever it points, nor to anything else.
+        escaping = os.path.join("..", "escaped.md")
+        outside = os.path.normpath(os.path.join(self.clone, escaping))
+        os.makedirs(os.path.dirname(outside), exist_ok=True)
+        open(outside, "w").close()
+        self._write_inbox(escaping)
+        decision, _ = self._enforce("Edit", {"file_path": outside})
+        self.assertEqual(decision, "deny")
+        # And it must not accidentally still allow the in-clone doc either.
+        decision2, _ = self._enforce("Edit", {"file_path": self.doc})
+        self.assertEqual(decision2, "deny")
+
+    def test_write_denied_when_inbox_docpath_is_clone_root(self):
+        # A docPath of "." resolves to the clone root itself, not a file
+        # strictly inside it. A real doc is always a file inside the clone,
+        # never the clone directory, so this must fail closed like any other
+        # undeterminable doc target -- not be treated as an allowed target.
+        self._write_inbox(".")
+        decision, _ = self._enforce("Edit", {"file_path": self.clone})
+        self.assertEqual(decision, "deny")
+        # It also must not leak into allowing some other in-clone doc.
+        decision2, _ = self._enforce("Edit", {"file_path": self.doc})
+        self.assertEqual(decision2, "deny")
 
     def test_write_done_sentinel_allowed(self):
         decision, _ = self._enforce("Write", {"file_path": os.path.join(self.state, "done.json")})
@@ -77,9 +176,13 @@ class TestEnforce(unittest.TestCase):
         decision, _ = self._enforce("Write", {"file_path": cfg})
         self.assertEqual(decision, "deny")
 
-    def test_normal_doc_in_clone_still_allowed(self):
+    def test_write_to_arbitrary_doc_in_clone_denied_without_inbox(self):
+        # Formerly "Edit/Write anywhere in the clone is allowed" — that
+        # blanket allowance is intentionally gone. With no inbox.json to name
+        # a target doc, the guard can't determine what's allowed, so it fails
+        # closed and denies the write even though the path is inside the clone.
         decision, _ = self._enforce("Write", {"file_path": os.path.join(self.clone, "doc.md")})
-        self.assertEqual(decision, "allow")
+        self.assertEqual(decision, "deny")
 
     def test_state_dir_path_still_allowed_with_git_block(self):
         decision, _ = self._enforce("Write", {"file_path": os.path.join(self.state, "done.json")})

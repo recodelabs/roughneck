@@ -75,7 +75,9 @@ repo — so always open the doc at the **absolute** path
 ## Hard rules
 
 - Only ever edit the doc named in the current `inbox.json`. Never touch other
-  files (the guard will block it anyway).
+  files — the guard enforces this: it reads the same `docPath` from
+  `inbox.json` and denies every Edit/Write outside that one file (state-dir
+  writes like `done.json` are still allowed).
 - Never run git, curl, package managers, or any shell command other than the wait
   script. They are blocked; attempting them wastes a turn.
 - Your "summary" is the only thing the human sees about this run (it becomes your
