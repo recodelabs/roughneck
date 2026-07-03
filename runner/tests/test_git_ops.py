@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from runner.git_ops import GitOps
+from runner.git_ops import GitOps, MergeConflict
 
 
 def _run(cwd, *args):
@@ -58,6 +58,120 @@ class TestGitOps(unittest.TestCase):
         # Committing an unchanged file must not raise.
         sha = self.git.commit(["a.md"], "agent: noop")
         self.assertEqual(len(sha), 40)
+
+    def test_commit_noop_when_unrelated_file_dirty(self):
+        # a.md (the target) is unchanged, but some unrelated file in the
+        # clone is dirty. Whole-repo `git status --porcelain` would be
+        # non-empty here, but nothing is STAGED for a.md, so this must still
+        # no-op cleanly and return HEAD rather than attempt an empty commit.
+        head_before = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=self.clone,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        Path(self.clone, "unrelated.md").write_text("dirty, untracked\n")
+
+        sha = self.git.commit(["a.md"], "agent: noop")
+
+        self.assertEqual(sha, head_before)
+        log = subprocess.run(
+            ["git", "log", "-1", "--pretty=%s"], cwd=self.clone,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertEqual(log, "init")
+        # The unrelated dirty file must not have been swept into a commit.
+        self.assertTrue(Path(self.clone, "unrelated.md").exists())
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=self.clone,
+            capture_output=True, text=True, check=True,
+        ).stdout
+        self.assertIn("unrelated.md", status)
+
+    def test_fetch_and_merge_raises_typed_conflict(self):
+        import shutil
+
+        origin = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, origin, ignore_errors=True)
+        _run(origin, "git", "init", "-q", "--bare")
+        _run(self.clone, "git", "branch", "-M", "main")
+        _run(self.clone, "git", "remote", "add", "origin", origin)
+        _run(self.clone, "git", "push", "-q", "-u", "origin", "main")
+
+        other = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, other, ignore_errors=True)
+        _run(other, "git", "clone", "-q", origin, ".")
+        _run(other, "git", "config", "user.email", "o@o.o")
+        _run(other, "git", "config", "user.name", "o")
+        Path(other, "a.md").write_text("# Hi\nfrom the app\n")  # same region
+        _run(other, "git", "add", "-A")
+        _run(other, "git", "commit", "-q", "-m", "app edit")
+        _run(other, "git", "push", "-q", "origin", "main")
+
+        # Local edit to the SAME region -> genuine content conflict on merge.
+        self.git.write_file("a.md", "# Hi\nfrom the agent\n")
+        self.git.commit(["a.md"], "agent edit")
+
+        with self.assertRaises(MergeConflict):
+            self.git.fetch_and_merge("main")
+
+        # Merge must have been aborted: no half-merged tree, no MERGE_HEAD.
+        self.assertFalse(Path(self.clone, ".git", "MERGE_HEAD").exists())
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=self.clone,
+            capture_output=True, text=True, check=True,
+        ).stdout
+        self.assertEqual(status, "")
+
+    def test_fetch_and_merge_nonconflict_failure_not_wrapped(self):
+        # No "origin" remote configured -> the fetch step fails. This must
+        # propagate as the original git error, NOT MergeConflict, since only
+        # the merge step's failure is a conflict.
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.git.fetch_and_merge("main")
+
+    def test_pull_with_reset_paths_discards_dirty_doc_then_merges(self):
+        import shutil
+
+        origin = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, origin, ignore_errors=True)
+        _run(origin, "git", "init", "-q", "--bare")
+        _run(self.clone, "git", "branch", "-M", "main")
+        _run(self.clone, "git", "remote", "add", "origin", origin)
+        _run(self.clone, "git", "push", "-q", "-u", "origin", "main")
+
+        other = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, other, ignore_errors=True)
+        _run(other, "git", "clone", "-q", origin, ".")
+        _run(other, "git", "config", "user.email", "o@o.o")
+        _run(other, "git", "config", "user.name", "o")
+        Path(other, "a.md").write_text("# Hi\nfrom the app\n")
+        _run(other, "git", "add", "-A")
+        _run(other, "git", "commit", "-q", "-m", "app edit")
+        _run(other, "git", "push", "-q", "origin", "main")
+
+        # A crash left a.md dirty locally (uncommitted working-tree edit)
+        # that touches the same region origin changed -> plain merge would
+        # refuse ("local changes would be overwritten").
+        self.git.write_file("a.md", "garbage from a crash\n")
+
+        self.git.pull("main", reset_paths=["a.md"])
+
+        # The dirty edit was discarded and the merge completed: HEAD now
+        # includes the app's commit.
+        log = subprocess.run(
+            ["git", "log", "-1", "--pretty=%s"], cwd=self.clone,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertEqual(log, "app edit")
+        self.assertEqual(self.git.read_file("a.md"), "# Hi\nfrom the app\n")
+
+    def test_pull_without_reset_paths_unchanged_behavior(self):
+        # Default reset_paths=() must not alter existing single-branch pull
+        # behavior (no remote configured here; checkout is a same-branch
+        # no-op and fetch fails as before -> CalledProcessError, not
+        # MergeConflict, and no reset attempted).
+        _run(self.clone, "git", "branch", "-M", "main")
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.git.pull("main")
 
     def test_try_push_and_fetch_and_merge_reconcile_divergence(self):
         # A bare "origin" plus a second clone that races us (the hosted app).
