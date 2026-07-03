@@ -56,7 +56,14 @@ export async function getInstallationToken(
     `${API}/app/installations/${installation.id}/access_tokens`,
     {
       method: "POST",
-      headers: appHeaders(jwt),
+      headers: {
+        ...appHeaders(jwt),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        repositories: [repo],
+        permissions: { contents: "write" },
+      }),
     },
   );
   if (!tokRes.ok)
