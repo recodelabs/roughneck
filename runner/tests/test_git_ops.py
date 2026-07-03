@@ -121,6 +121,44 @@ class TestGitOps(unittest.TestCase):
         ).stdout
         self.assertEqual(status, "")
 
+    def test_fetch_and_merge_raises_typed_conflict_on_prestart_refusal(self):
+        # A DIRTY tracked file locally (uncommitted, not even staged) plus
+        # origin advancing on that same file makes `git merge` refuse before
+        # it even starts ("local changes would be overwritten by merge") —
+        # there is no MERGE_HEAD in this case. fetch_and_merge must still
+        # surface this as MergeConflict (not a bare CalledProcessError from
+        # the abort itself failing with "There is no merge to abort"), and
+        # leave the working tree in a clean, recoverable state.
+        import shutil
+
+        origin = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, origin, ignore_errors=True)
+        _run(origin, "git", "init", "-q", "--bare")
+        _run(self.clone, "git", "branch", "-M", "main")
+        _run(self.clone, "git", "remote", "add", "origin", origin)
+        _run(self.clone, "git", "push", "-q", "-u", "origin", "main")
+
+        other = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, other, ignore_errors=True)
+        _run(other, "git", "clone", "-q", origin, ".")
+        _run(other, "git", "config", "user.email", "o@o.o")
+        _run(other, "git", "config", "user.name", "o")
+        Path(other, "a.md").write_text("# Hi\nfrom the app\n")
+        _run(other, "git", "add", "-A")
+        _run(other, "git", "commit", "-q", "-m", "app edit")
+        _run(other, "git", "push", "-q", "origin", "main")
+
+        # Local dirty (uncommitted) edit to the same file -> merge refuses
+        # before starting; there's no MERGE_HEAD to abort.
+        self.git.write_file("a.md", "garbage from a crash, uncommitted\n")
+
+        with self.assertRaises(MergeConflict):
+            self.git.fetch_and_merge("main")
+
+        # No MERGE_HEAD was ever created, and the best-effort abort must not
+        # leak its own CalledProcessError ("There is no merge to abort").
+        self.assertFalse(Path(self.clone, ".git", "MERGE_HEAD").exists())
+
     def test_fetch_and_merge_nonconflict_failure_not_wrapped(self):
         # No "origin" remote configured -> the fetch step fails. This must
         # propagate as the original git error, NOT MergeConflict, since only

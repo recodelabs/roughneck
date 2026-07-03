@@ -55,7 +55,13 @@ class GitOps:
         try:
             self._git("merge", "--no-edit", f"origin/{branch}")
         except subprocess.CalledProcessError as exc:
-            self._git("merge", "--abort")
+            try:
+                self._git("merge", "--abort")
+            except subprocess.CalledProcessError:
+                # merge refused before starting (no MERGE_HEAD, e.g. a dirty
+                # tracked file conflicting with origin) — still a conflict to
+                # recover from, so fall through to raising MergeConflict below.
+                pass
             raise MergeConflict(str(exc)) from exc
 
     def reset_hard_to_origin(self, branch: str) -> None:

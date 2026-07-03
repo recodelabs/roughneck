@@ -54,7 +54,11 @@ def is_new_task(state_dir: str) -> bool:
     done_path = os.path.join(state_dir, "done.json")
     done = _load_json(done_path)
     if done is None:
-        # No done.json at all -> genuinely fresh task.
+        # done.json missing, OR present but corrupt/invalid JSON (_load_json
+        # returns None for both) -> either way we can't read a replyTo to
+        # compare, so treat as a genuinely fresh task. Same liveness-favoring
+        # rationale as the not-a-dict branch just below: a done sentinel we
+        # can't trust must not be allowed to permanently block a real task.
         return True
     if not isinstance(done, dict):
         # done.json exists but isn't a JSON object (e.g. a partial write
