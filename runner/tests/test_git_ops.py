@@ -91,7 +91,7 @@ class TestGitOps(unittest.TestCase):
 
         origin = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, origin, ignore_errors=True)
-        _run(origin, "git", "init", "-q", "--bare")
+        _run(origin, "git", "init", "-q", "--bare", "-b", "main")
         _run(self.clone, "git", "branch", "-M", "main")
         _run(self.clone, "git", "remote", "add", "origin", origin)
         _run(self.clone, "git", "push", "-q", "-u", "origin", "main")
@@ -133,7 +133,7 @@ class TestGitOps(unittest.TestCase):
 
         origin = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, origin, ignore_errors=True)
-        _run(origin, "git", "init", "-q", "--bare")
+        _run(origin, "git", "init", "-q", "--bare", "-b", "main")
         _run(self.clone, "git", "branch", "-M", "main")
         _run(self.clone, "git", "remote", "add", "origin", origin)
         _run(self.clone, "git", "push", "-q", "-u", "origin", "main")
@@ -171,7 +171,7 @@ class TestGitOps(unittest.TestCase):
 
         origin = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, origin, ignore_errors=True)
-        _run(origin, "git", "init", "-q", "--bare")
+        _run(origin, "git", "init", "-q", "--bare", "-b", "main")
         _run(self.clone, "git", "branch", "-M", "main")
         _run(self.clone, "git", "remote", "add", "origin", origin)
         _run(self.clone, "git", "push", "-q", "-u", "origin", "main")
@@ -220,7 +220,7 @@ class TestGitOps(unittest.TestCase):
 
         origin = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, origin, ignore_errors=True)
-        _run(origin, "git", "init", "-q", "--bare")
+        _run(origin, "git", "init", "-q", "--bare", "-b", "main")
         _run(self.clone, "git", "branch", "-M", "main")
         _run(self.clone, "git", "remote", "add", "origin", origin)
         _run(self.clone, "git", "push", "-q", "-u", "origin", "main")
@@ -264,7 +264,7 @@ class TestGitOps(unittest.TestCase):
 
         origin = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, origin, ignore_errors=True)
-        _run(origin, "git", "init", "-q", "--bare")
+        _run(origin, "git", "init", "-q", "--bare", "-b", "main")
         _run(self.clone, "git", "branch", "-M", "main")
         _run(self.clone, "git", "remote", "add", "origin", origin)
         _run(self.clone, "git", "push", "-q", "-u", "origin", "main")

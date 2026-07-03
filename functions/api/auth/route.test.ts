@@ -59,9 +59,7 @@ describe("GET /api/auth/callback", () => {
     );
     const res = await onRequestGet({ request, env });
     const location = res.headers.get("Location") || "";
-    expect(location).toBe(
-      "https://margins.example/?code=a%2Bb&state=x%26y",
-    );
+    expect(location).toBe("https://margins.example/?code=a%2Bb&state=x%26y");
   });
 });
 
