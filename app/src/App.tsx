@@ -13,15 +13,12 @@ import {
 } from "./activity-live";
 import type { ActivityEntry } from "./activity-log";
 import {
-  buildLocationForDocumentEditorViewMode,
-  type DocumentEditorViewMode,
   formatWorkspacePathForDisplay,
-  getDocumentEditorViewModeFromLocation,
-  getPathLeaf,
   getRequestedPathState,
   joinPath,
   PREVIEW_PATH,
   ROUGHDRAFT_FLAVORED_MARKDOWN_PATH,
+  resolveDocumentFilenameLabel,
   syncRequestedPathInUrl,
 } from "./app-navigation";
 import { resolveAppView } from "./app-view";
@@ -30,6 +27,7 @@ import { ConflictResolveDialog } from "./ConflictResolveDialog";
 import { DocumentLoadError } from "./DocumentLoadError";
 import type { GitHubDocNav } from "./DocumentWorkspace";
 import { detectBackend, isGitHubMode } from "./detect-backend";
+import { useDocumentEditorViewMode } from "./document-editor-view-mode";
 import { createDocumentSessionStore } from "./document-session";
 import { GitHubPicker } from "./GitHubPicker";
 import { completeLoginFromUrl, getStoredToken } from "./github-auth";
@@ -143,9 +141,8 @@ export function App() {
   const [committingBeforeLeave, setCommittingBeforeLeave] = useState(false);
   const [leaveError, setLeaveError] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
-  const [documentEditorViewMode, setDocumentEditorViewMode] = useState(() =>
-    getDocumentEditorViewModeFromLocation("rich-text"),
-  );
+  const [documentEditorViewMode, handleDocumentEditorViewModeChange] =
+    useDocumentEditorViewMode();
   const [toast, setToast] = useState<{
     message: string;
     commitUrl?: string;
@@ -922,21 +919,6 @@ export function App() {
 
   const dismissToast = useCallback(() => setToast(null), []);
 
-  const handleDocumentEditorViewModeChange = useCallback(
-    (nextMode: DocumentEditorViewMode) => {
-      setDocumentEditorViewMode((current) => {
-        if (nextMode === current) return current;
-        window.history.replaceState(
-          null,
-          "",
-          buildLocationForDocumentEditorViewMode(nextMode),
-        );
-        return nextMode;
-      });
-    },
-    [],
-  );
-
   // SPA navigation away from the open document (breadcrumb back-to-picker /
   // folder). A full reload used to trigger the native beforeunload warning;
   // SPA nav bypasses it, so we re-run the same dirty check here and confirm
@@ -1050,12 +1032,11 @@ export function App() {
     );
   }
 
-  const documentAbsolutePath =
-    activeDocumentPath && backend?.info.projectPath
-      ? joinPath(backend.info.projectPath, activeDocumentPath)
-      : requestedPathState.rawPath;
-  const documentFilenameLabel =
-    getPathLeaf(documentAbsolutePath ?? activeDocumentPath) ?? "Untitled.md";
+  const documentFilenameLabel = resolveDocumentFilenameLabel({
+    activeDocumentPath,
+    projectPath: backend?.info.projectPath,
+    rawPath: requestedPathState.rawPath,
+  });
 
   // Build githubNav when in GitHub mode and a markdown file path is in the URL
   const githubNav: GitHubDocNav | null = (() => {
