@@ -14,11 +14,11 @@ import {
 import type { ActivityEntry } from "./activity-log";
 import {
   formatWorkspacePathForDisplay,
-  getPathLeaf,
   getRequestedPathState,
   joinPath,
   PREVIEW_PATH,
   ROUGHDRAFT_FLAVORED_MARKDOWN_PATH,
+  resolveDocumentFilenameLabel,
   syncRequestedPathInUrl,
 } from "./app-navigation";
 import { resolveAppView } from "./app-view";
@@ -1032,12 +1032,11 @@ export function App() {
     );
   }
 
-  const documentAbsolutePath =
-    activeDocumentPath && backend?.info.projectPath
-      ? joinPath(backend.info.projectPath, activeDocumentPath)
-      : requestedPathState.rawPath;
-  const documentFilenameLabel =
-    getPathLeaf(documentAbsolutePath ?? activeDocumentPath) ?? "Untitled.md";
+  const documentFilenameLabel = resolveDocumentFilenameLabel({
+    activeDocumentPath,
+    projectPath: backend?.info.projectPath,
+    rawPath: requestedPathState.rawPath,
+  });
 
   // Build githubNav when in GitHub mode and a markdown file path is in the URL
   const githubNav: GitHubDocNav | null = (() => {

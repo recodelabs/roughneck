@@ -95,6 +95,34 @@ export function getPathLeaf(path?: string | null) {
   return segments.at(-1) || value;
 }
 
+/**
+ * The filename the document toolbar shows for the open document.
+ *
+ * `rawPath` is the path the tab was *opened* with — App captures it once at
+ * mount and never refreshes it. Only the local backend reports a
+ * `projectPath`, so on GitHub (which reports none) preferring `rawPath` pinned
+ * the label to whichever document the tab first loaded, no matter how many
+ * files you opened afterwards. `activeDocumentPath` tracks the document
+ * actually on screen, so it wins wherever it's known; `rawPath` stays as the
+ * fallback for the moment before the first document has loaded.
+ */
+export function resolveDocumentFilenameLabel({
+  activeDocumentPath,
+  projectPath,
+  rawPath,
+}: {
+  activeDocumentPath?: string | null;
+  projectPath?: string | null;
+  rawPath?: string | null;
+}): string {
+  const documentPath =
+    activeDocumentPath && projectPath
+      ? joinPath(projectPath, activeDocumentPath)
+      : (activeDocumentPath ?? rawPath);
+
+  return getPathLeaf(documentPath) ?? "Untitled.md";
+}
+
 export function joinPath(basePath: string, relativePath: string) {
   const separator = basePath.includes("\\") ? "\\" : "/";
   const normalizedBasePath = basePath.endsWith(separator)
