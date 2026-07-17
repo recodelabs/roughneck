@@ -13,10 +13,7 @@ import {
 } from "./activity-live";
 import type { ActivityEntry } from "./activity-log";
 import {
-  buildLocationForDocumentEditorViewMode,
-  type DocumentEditorViewMode,
   formatWorkspacePathForDisplay,
-  getDocumentEditorViewModeFromLocation,
   getPathLeaf,
   getRequestedPathState,
   joinPath,
@@ -30,6 +27,7 @@ import { ConflictResolveDialog } from "./ConflictResolveDialog";
 import { DocumentLoadError } from "./DocumentLoadError";
 import type { GitHubDocNav } from "./DocumentWorkspace";
 import { detectBackend, isGitHubMode } from "./detect-backend";
+import { useDocumentEditorViewMode } from "./document-editor-view-mode";
 import { createDocumentSessionStore } from "./document-session";
 import { GitHubPicker } from "./GitHubPicker";
 import { completeLoginFromUrl, getStoredToken } from "./github-auth";
@@ -143,9 +141,8 @@ export function App() {
   const [committingBeforeLeave, setCommittingBeforeLeave] = useState(false);
   const [leaveError, setLeaveError] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
-  const [documentEditorViewMode, setDocumentEditorViewMode] = useState(() =>
-    getDocumentEditorViewModeFromLocation("rich-text"),
-  );
+  const [documentEditorViewMode, handleDocumentEditorViewModeChange] =
+    useDocumentEditorViewMode();
   const [toast, setToast] = useState<{
     message: string;
     commitUrl?: string;
@@ -921,21 +918,6 @@ export function App() {
   }, [activeDocumentPath, applyDocumentPage, backend, documentSession]);
 
   const dismissToast = useCallback(() => setToast(null), []);
-
-  const handleDocumentEditorViewModeChange = useCallback(
-    (nextMode: DocumentEditorViewMode) => {
-      setDocumentEditorViewMode((current) => {
-        if (nextMode === current) return current;
-        window.history.replaceState(
-          null,
-          "",
-          buildLocationForDocumentEditorViewMode(nextMode),
-        );
-        return nextMode;
-      });
-    },
-    [],
-  );
 
   // SPA navigation away from the open document (breadcrumb back-to-picker /
   // folder). A full reload used to trigger the native beforeunload warning;
