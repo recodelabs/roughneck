@@ -130,6 +130,128 @@ describe("GitHubPicker file open", () => {
   });
 });
 
+describe("GitHubPicker branch pulldown", () => {
+  /** Route the two calls the picker makes: the repo tree and the branch list. */
+  function mockRepo(branches: string[]) {
+    const fetchMock = vi.fn(async (url: unknown) => {
+      const href = String(url);
+      if (href.includes("/branches"))
+        return new Response(
+          JSON.stringify(branches.map((name) => ({ name }))),
+          { status: 200 },
+        );
+      return new Response(JSON.stringify({ tree: [] }), { status: 200 });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    return fetchMock;
+  }
+
+  async function renderWithRepo(branches: string[]) {
+    mockRepo(branches);
+    vi.useFakeTimers();
+    await act(async () => {
+      root.render(<GitHubPicker />);
+    });
+    const repoInput =
+      container.querySelector<HTMLInputElement>("#gh-repo-input");
+    if (!repoInput) throw new Error("repo input not found");
+    await act(async () => {
+      typeInto(repoInput, "own/repo");
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    vi.useRealTimers();
+  }
+
+  it("shows every branch on opening the pulldown — no typing required", async () => {
+    await renderWithRepo(["main", "feature/one", "release-2"]);
+
+    const trigger =
+      container.querySelector<HTMLButtonElement>("#gh-branch-trigger");
+    if (!trigger) throw new Error("branch trigger not found");
+    // The trigger reads as the current branch before it's ever opened, and the
+    // list itself isn't mounted until it is.
+    expect(trigger.textContent).toContain("main");
+    expect(
+      document.querySelectorAll('[data-slot="combobox-item"]'),
+    ).toHaveLength(0);
+
+    await act(async () => {
+      trigger.click();
+    });
+
+    const options = Array.from(
+      document.querySelectorAll('[data-slot="combobox-item"]'),
+    ).map((el) => el.textContent);
+    expect(options).toEqual(
+      expect.arrayContaining(["main", "feature/one", "release-2"]),
+    );
+  });
+
+  it("drops the previous repo's branches when the repo changes", async () => {
+    // Branch list depends on which repo is asked for, so a stale list is
+    // visible as branches from the repo we navigated away from.
+    global.fetch = vi.fn(async (url: unknown) => {
+      const href = String(url);
+      if (href.includes("/repos/own/first/branches"))
+        return new Response(JSON.stringify([{ name: "first-only" }]), {
+          status: 200,
+        });
+      if (href.includes("/repos/own/second/branches"))
+        return new Response(JSON.stringify([{ name: "second-only" }]), {
+          status: 200,
+        });
+      return new Response(JSON.stringify({ tree: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    vi.useFakeTimers();
+    await act(async () => {
+      root.render(<GitHubPicker />);
+    });
+    const repoInput =
+      container.querySelector<HTMLInputElement>("#gh-repo-input");
+    if (!repoInput) throw new Error("repo input not found");
+    await act(async () => {
+      typeInto(repoInput, "own/first");
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    // Switch repos, then look *before* the debounced branch fetch has fired:
+    // the first repo's branches must already be gone rather than lingering as
+    // pickable options that don't exist in the new repo.
+    await act(async () => {
+      typeInto(repoInput, "own/second");
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    const options = () =>
+      Array.from(document.querySelectorAll('[data-slot="combobox-item"]')).map(
+        (el) => el.textContent,
+      );
+
+    const trigger =
+      container.querySelector<HTMLButtonElement>("#gh-branch-trigger");
+    if (!trigger) throw new Error("branch trigger not found");
+    await act(async () => {
+      trigger.click();
+    });
+    expect(options()).not.toContain("first-only");
+
+    // The open pulldown then fills in with the new repo's branches.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    vi.useRealTimers();
+    expect(options()).toContain("second-only");
+  });
+
+  it("falls back to a text input when the branch list can't be loaded", async () => {
+    await renderWithRepo([]);
+
+    expect(container.querySelector("#gh-branch-trigger")).toBeNull();
+    const input = container.querySelector<HTMLInputElement>("#gh-branch-input");
+    expect(input?.value).toBe("main");
+  });
+});
+
 describe("GitHubPicker new-file creation", () => {
   async function loadRepo(treePaths: string[]) {
     const treeMock = vi.fn(

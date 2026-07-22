@@ -17,6 +17,16 @@ import {
 } from "./components/ui/autocomplete";
 import { Button } from "./components/ui/button";
 import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxTrigger,
+  ComboboxValue,
+} from "./components/ui/combobox";
+import {
   Dialog,
   DialogContent,
   DialogFooter,
@@ -193,6 +203,7 @@ export function GitHubPicker() {
   // the fields keep working as free-text inputs if the API call errors.
   const [repoOptions, setRepoOptions] = useState<RepoOption[]>([]);
   const [branchOptions, setBranchOptions] = useState<string[]>([]);
+  const [branchesLoading, setBranchesLoading] = useState(false);
 
   // Map of full name -> default branch, so picking a repo can preselect its
   // default branch instead of a hard-coded "main".
@@ -200,6 +211,24 @@ export function GitHubPicker() {
     () => new Map(repoOptions.map((o) => [o.fullName, o.defaultBranch])),
     [repoOptions],
   );
+
+  // Branch pulldown contents: the repo's default branch first (the one people
+  // reach for most), then the rest as GitHub returned them. The branch in the
+  // URL is included even if it's missing from the list, so a hand-typed or
+  // since-deleted ref still shows as the selected item.
+  const branchItems = useMemo(() => {
+    if (branchOptions.length === 0) return [];
+    const def = repoDefaultBranch.get(repo);
+    const ordered = [
+      ...(def && branchOptions.includes(def) ? [def] : []),
+      ...branchOptions.filter((b) => b !== def),
+    ];
+    return ordered.includes(ref) ? ordered : [ref, ...ordered];
+  }, [branchOptions, repoDefaultBranch, repo, ref]);
+
+  // Show the pulldown as soon as branches are on their way, so switching repos
+  // doesn't swap the control out for the free-text fallback and back again.
+  const showBranchPulldown = branchItems.length > 0 || branchesLoading;
 
   // Fetch the repos the user can access through the App's installations, once
   // per token. Failure is non-fatal: the repo field stays free-text.
@@ -223,9 +252,14 @@ export function GitHubPicker() {
     const [owner, name] = repo.split("/");
     if (!token || !owner || !name) {
       setBranchOptions([]);
+      setBranchesLoading(false);
       return;
     }
     let cancelled = false;
+    // Drop the previous repo's branches straight away — showing them under a
+    // new repo would offer branches that don't exist there.
+    setBranchOptions([]);
+    setBranchesLoading(true);
     const timer = window.setTimeout(() => {
       listBranches(token, owner, name)
         .then((b) => {
@@ -233,6 +267,9 @@ export function GitHubPicker() {
         })
         .catch(() => {
           if (!cancelled) setBranchOptions([]); // fail soft
+        })
+        .finally(() => {
+          if (!cancelled) setBranchesLoading(false);
         });
     }, TREE_FETCH_DEBOUNCE_MS);
     return () => {
@@ -511,34 +548,56 @@ export function GitHubPicker() {
           </div>
           <div className="flex flex-col gap-1">
             <label
-              htmlFor="gh-branch-input"
+              htmlFor={
+                showBranchPulldown ? "gh-branch-trigger" : "gh-branch-input"
+              }
               className="text-xs font-medium text-stone-500 dark:text-stone-400"
             >
               Branch
             </label>
-            <Autocomplete
-              items={branchOptions}
-              value={ref}
-              onValueChange={setRef}
-            >
-              <AutocompleteInput
-                id="gh-branch-input"
-                placeholder="main"
-                className="w-44"
-              />
-              {branchOptions.length > 0 ? (
-                <AutocompleteContent>
-                  <AutocompleteEmpty>No matching branches</AutocompleteEmpty>
-                  <AutocompleteList>
+            {/* With branches loaded this is a pulldown: the trigger shows the
+                current branch and opening it lists every branch (searchable).
+                If the branch list can't be loaded — API error, or no repo
+                chosen yet — fall back to typing the ref by hand. */}
+            {showBranchPulldown ? (
+              <Combobox
+                items={branchItems}
+                value={ref}
+                onValueChange={(value) => {
+                  if (value) setRef(value);
+                }}
+              >
+                <ComboboxTrigger id="gh-branch-trigger" className="w-44">
+                  <ComboboxValue />
+                </ComboboxTrigger>
+                <ComboboxContent>
+                  <ComboboxInput placeholder="Find a branch…" />
+                  <ComboboxEmpty>
+                    {branchesLoading
+                      ? "Loading branches…"
+                      : "No matching branches"}
+                  </ComboboxEmpty>
+                  <ComboboxList>
                     {(item: string) => (
-                      <AutocompleteItem key={item} value={item}>
+                      <ComboboxItem key={item} value={item}>
                         {item}
-                      </AutocompleteItem>
+                      </ComboboxItem>
                     )}
-                  </AutocompleteList>
-                </AutocompleteContent>
-              ) : null}
-            </Autocomplete>
+                  </ComboboxList>
+                </ComboboxContent>
+              </Combobox>
+            ) : (
+              <input
+                id="gh-branch-input"
+                value={ref}
+                onChange={(e) => setRef(e.target.value)}
+                placeholder="main"
+                className="h-10 w-44 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-950 dark:text-slate-50 outline-none focus:ring-2 focus:ring-slate-300/70 dark:focus:ring-slate-600/70 placeholder:text-stone-400"
+                spellCheck={false}
+                autoCapitalize="none"
+                autoComplete="off"
+              />
+            )}
           </div>
         </div>
 
