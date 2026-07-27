@@ -143,7 +143,10 @@ export function FileTreeSidebar({
 
   if (collapsed) {
     return (
-      <div className="flex w-9 shrink-0 flex-col items-center border-r border-slate-200 dark:border-slate-800 bg-[#FCFCFC] dark:bg-background py-2">
+      <div
+        data-print-hide
+        className="flex w-9 shrink-0 flex-col items-center border-r border-slate-200 dark:border-slate-800 bg-[#FCFCFC] dark:bg-background py-2"
+      >
         <button
           type="button"
           data-testid="file-tree-expand"
@@ -162,6 +165,7 @@ export function FileTreeSidebar({
     <aside
       data-testid="file-tree-sidebar"
       aria-label="File sidebar"
+      data-print-hide
       className="flex w-64 shrink-0 flex-col border-r border-slate-200 dark:border-slate-800 bg-[#FCFCFC] dark:bg-background"
     >
       {/* Header */}

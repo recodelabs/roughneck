@@ -19,6 +19,92 @@ export interface PaletteCommand {
   hint?: string;
 }
 
+/** What the open document allows, as far as the palette is concerned. */
+export interface DocumentPaletteContext {
+  /** Read-only viewers get no save/suggest rows. */
+  readOnly: boolean;
+  /** Suggesting mode and PDF export only make sense for markdown. */
+  isMarkdownDoc: boolean;
+  /** Drives the suggesting row's on/off wording. */
+  suggesting: boolean;
+  /** GitHub-backed documents can be shared. */
+  isGitHubBackend: boolean;
+  /** Branch/repo switching needs a GitHub location to switch away from. */
+  hasGitHubNav: boolean;
+  /** Paths listed under the "Files" group. */
+  files: string[];
+}
+
+/**
+ * Build the palette's root page for the open document. Pure so the rules about
+ * which rows appear for which document are unit-testable; `DocumentWorkspace`
+ * renders the result and maps the ids back to actions.
+ */
+export function buildDocumentPaletteCommands(
+  context: DocumentPaletteContext,
+): PaletteCommand[] {
+  const commands: PaletteCommand[] = [];
+  if (!context.readOnly) {
+    commands.push({
+      id: "action:save",
+      title: "Save document",
+      group: "Actions",
+      keywords: ["commit", "write"],
+    });
+  }
+  if (!context.readOnly && context.isMarkdownDoc) {
+    commands.push({
+      id: "action:suggest",
+      title: context.suggesting
+        ? "Turn off suggesting mode"
+        : "Turn on suggesting mode",
+      group: "Actions",
+      keywords: ["review", "track changes"],
+    });
+  }
+  if (context.isMarkdownDoc) {
+    // Available to viewers as well as editors: exporting reads the document.
+    commands.push({
+      id: "action:print",
+      title: "Export as PDF",
+      group: "Actions",
+      keywords: ["print", "pdf", "download", "save as"],
+    });
+  }
+  commands.push({
+    id: "action:theme",
+    title: "Toggle theme",
+    group: "Actions",
+    keywords: ["dark", "light", "appearance"],
+  });
+  if (context.isGitHubBackend) {
+    commands.push({
+      id: "action:share",
+      title: "Open share…",
+      group: "Actions",
+      keywords: ["public", "link", "invite"],
+    });
+    if (context.hasGitHubNav) {
+      commands.push(
+        {
+          id: "action:branches",
+          title: "Switch branch…",
+          group: "Actions",
+        },
+        {
+          id: "action:repos",
+          title: "Switch repository…",
+          group: "Actions",
+        },
+      );
+    }
+  }
+  for (const path of context.files) {
+    commands.push({ id: `file:${path}`, title: path, group: "Files" });
+  }
+  return commands;
+}
+
 function isSeparator(ch: string): boolean {
   return ch === " " || ch === "/" || ch === "-" || ch === "_" || ch === ".";
 }

@@ -894,3 +894,126 @@
 .document-save-status-saved {
   animation: document-save-status-saved-fade 2s ease-out forwards;
 }
+
+/*
+ * Print / export to PDF.
+ *
+ * "Export as PDF" is the browser's own print pipeline (see `print-document.ts`),
+ * so these rules are the whole feature: strip the app chrome, unlock the
+ * fixed-height flex shell, and let the document card flow across pages on its
+ * own. Dark mode is handled in JS — the `dark` class comes off `<html>` for the
+ * duration of the print, so nothing here needs a dark variant.
+ */
+@media print {
+  @page {
+    margin: 0.75in;
+  }
+
+  /*
+   * The app shell is a fixed-height flex column with an inner scroll area. Left
+   * alone it clips the PDF to a single viewport-sized page.
+   */
+  html,
+  body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  #root,
+  main,
+  [data-document-scroller] {
+    display: block !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  [data-document-scroller] {
+    padding: 0 !important;
+  }
+
+  /*
+   * Chrome. `[data-print-hide]` marks the containers in JSX (breadcrumb bar,
+   * toolbar row, sidebar, agent box); `.fixed` sweeps every floating overlay —
+   * commit button, status stack, conflict notice, toasts, palette — in one go,
+   * since that is Tailwind's literal class for `position: fixed`.
+   *
+   * `[data-base-ui-portal]` matters more than it looks: clicking the toolbar
+   * button leaves its tooltip open, and Base UI portals it to <body> outside
+   * the app tree, so it would otherwise print on top of the first heading.
+   */
+  [data-print-hide],
+  [data-base-ui-portal],
+  .fixed,
+  .document-comment-rail,
+  .document-comment-fallback {
+    display: none !important;
+  }
+
+  /*
+   * The page itself: no card, no shadow, no inset. Full width, since the grid's
+   * reserved comment-rail column is dead space once the rail is hidden.
+   *
+   * `:not([data-print-hide])` is load-bearing — the toolbar row is a
+   * `.document-page-shell` too, and this rule would otherwise out-cascade the
+   * hide above (same specificity, both `!important`, later wins).
+   */
+  .document-page-shell:not([data-print-hide]) {
+    display: block !important;
+    max-width: none !important;
+  }
+
+  /* On screen the column is capped at 56rem; on paper the page margin is the
+     measure, so let it fill the sheet. */
+  .document-page-main {
+    max-width: none !important;
+  }
+
+  div:has(> [data-testid="document-content-card"]) {
+    padding-bottom: 0 !important;
+  }
+
+  [data-testid="document-content-card"] {
+    max-width: none !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: #fff !important;
+    box-shadow: none !important;
+
+    /*
+     * Callout icons and tints, code-block fills and comment highlights are all
+     * painted as backgrounds, which browsers drop unless the reader happens to
+     * have "Background graphics" ticked. Those colours carry meaning here, so
+     * opt the document (and only the document) into exact colour.
+     */
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Pagination: keep headings with their text and blocks in one piece. */
+  .tiptap h1,
+  .tiptap h2,
+  .tiptap h3,
+  .tiptap h4 {
+    break-after: avoid;
+  }
+
+  .tiptap p,
+  .tiptap li {
+    orphans: 2;
+    widows: 2;
+  }
+
+  .tiptap blockquote,
+  .tiptap img,
+  .tiptap pre,
+  .tiptap table {
+    break-inside: avoid;
+  }
+
+  .tiptap img {
+    max-width: 100% !important;
+  }
+}
