@@ -36,6 +36,7 @@ import { Homepage, HomepageSubtitle } from "./Homepage";
 import type { MergeRegion } from "./merge";
 import type { DocumentSaveState } from "./PageCard";
 import { PreviewPage } from "./PreviewPage";
+import { installPrintThemeReset } from "./print-document";
 import { PublicDocNotFoundError } from "./public-backend";
 import { RoughdraftFlavoredMarkdownPage } from "./RoughdraftFlavoredMarkdownPage";
 import { runWithErrorFeedback } from "./run-with-error-feedback";
@@ -195,6 +196,9 @@ export function App() {
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
+
+  // App-wide so ⌘P gets the same light-on-white PDF as the toolbar button.
+  useEffect(() => installPrintThemeReset(), []);
 
   useEffect(() => {
     let cancelled = false;

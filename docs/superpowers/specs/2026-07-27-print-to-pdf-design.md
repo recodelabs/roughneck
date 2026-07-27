@@ -35,10 +35,14 @@ Marked containers:
 
 - the GitHub breadcrumb bar (`DocumentWorkspace`)
 - the document toolbar row (mode select, share, history, comment toggles)
-- the file-tree sidebar
+- the file-tree sidebar, expanded and collapsed (`FileTreeSidebar`)
 - the `InstructionSender` agent box wrapper
-- the mobile comment fallback list (`PageCard`)
-- the review/comment rail (`PageCard`, `DocumentWorkspace` spacer)
+- the comment-rail spacer (`DocumentWorkspace`)
+
+The rails inside `PageCard` are hidden by their existing layout classes
+(`.document-comment-rail`, `.document-comment-fallback`) rather than a new
+attribute, which would have meant threading a prop through `CommentEditorList`
+and `DocumentReviewRail` for no gain.
 
 An explicit attribute beats a list of CSS selectors: it is greppable from the
 component, survives class churn, and can be asserted in tests.
@@ -53,6 +57,11 @@ since `.fixed` is Tailwind's literal class name for `position: fixed`:
 }
 ```
 
+Base UI portals its overlays to `<body>`, outside the app tree and without a
+`.fixed` class, so `[data-base-ui-portal]` is hidden too. This is not
+hypothetical: clicking the toolbar button leaves its own tooltip open, and
+without the rule "Export as PDF" prints on top of the document's first heading.
+
 ## Printing the page
 
 The printed region is `[data-testid="document-content-card"]` in `PageCard`.
@@ -62,9 +71,21 @@ Print rules:
 - unlock the scroll containers — `html`, `body`, `main`, and
   `[data-document-scroller]` get `height: auto; overflow: visible`. Without
   this the fixed-height flex shell clips the PDF to a single page.
+- drop the on-screen 56rem cap on `.document-page-main`, so the page margin is
+  the measure
+- `print-color-adjust: exact` on the card only. Callout icons and tints, code
+  fills and comment highlights are painted as backgrounds, which browsers drop
+  unless the reader has "Background graphics" ticked — and those colours carry
+  meaning.
 - `@page { margin: 0.75in }`
 - break hints: `break-after: avoid` on headings; `break-inside: avoid` on `pre`,
   `blockquote`, `table`, `img`
+
+One cascade trap is worth naming: the toolbar row is itself a
+`.document-page-shell`, so the rule that unwraps the shell's grid is written
+`.document-page-shell:not([data-print-hide])`. Both rules are `!important` at
+equal specificity, so without the `:not()` the later one wins and the toolbar
+prints.
 
 CriticMarkup keeps its on-screen styling. No comment endnotes, no custom
 header/footer (the browser's own header/footer stays under the user's control in
@@ -94,8 +115,11 @@ Vitest + jsdom:
   when the document started in light mode
 - each chrome container carries `data-print-hide`
 
-Print CSS is not observable in jsdom, so page layout is verified manually in a
-browser before the work is called done.
+Print CSS is not observable in jsdom, so page layout was verified in a real
+browser (Playwright against the `/preview` route) by emulating print media and
+generating PDFs: chrome hidden, card stripped, dark-mode document printing
+light, headings and code blocks paginating intact across a 12-section document,
+and both triggers firing `window.print`.
 
 ## Known limitation
 

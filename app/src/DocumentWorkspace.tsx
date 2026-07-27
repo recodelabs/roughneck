@@ -14,6 +14,7 @@ import {
   Loader2,
   MessageSquarePlus,
   PencilLine,
+  Printer,
   RefreshCcw,
   Upload,
 } from "lucide-react";
@@ -36,7 +37,10 @@ import {
 } from "./agent-box-visibility";
 import type { DocumentEditorViewMode } from "./app-navigation";
 import { CommandPalette } from "./CommandPalette";
-import type { PaletteCommand } from "./command-palette";
+import {
+  buildDocumentPaletteCommands,
+  type PaletteCommand,
+} from "./command-palette";
 import {
   readStoredCommentsHidden,
   writeStoredCommentsHidden,
@@ -81,6 +85,7 @@ import {
   type DocumentSaveState,
   PageCard,
 } from "./PageCard";
+import { installPrintThemeReset, printDocument } from "./print-document";
 import type { PublicBackend } from "./public-backend";
 import { SharePopover } from "./SharePopover";
 import { getSharingFlags } from "./sharing-frontmatter";
@@ -442,58 +447,14 @@ export function DocumentWorkspace({
   }, [paletteOpen]);
 
   const paletteRootCommands = useMemo<PaletteCommand[]>(() => {
-    const commands: PaletteCommand[] = [];
-    if (!readOnly) {
-      commands.push({
-        id: "action:save",
-        title: "Save document",
-        group: "Actions",
-        keywords: ["commit", "write"],
-      });
-    }
-    if (!readOnly && isMarkdownDoc) {
-      commands.push({
-        id: "action:suggest",
-        title:
-          documentInteractionMode === "suggesting"
-            ? "Turn off suggesting mode"
-            : "Turn on suggesting mode",
-        group: "Actions",
-        keywords: ["review", "track changes"],
-      });
-    }
-    commands.push({
-      id: "action:theme",
-      title: "Toggle theme",
-      group: "Actions",
-      keywords: ["dark", "light", "appearance"],
+    return buildDocumentPaletteCommands({
+      readOnly,
+      isMarkdownDoc,
+      suggesting: documentInteractionMode === "suggesting",
+      isGitHubBackend,
+      hasGitHubNav: Boolean(githubNav),
+      files: paletteFiles,
     });
-    if (isGitHubBackend) {
-      commands.push({
-        id: "action:share",
-        title: "Open share…",
-        group: "Actions",
-        keywords: ["public", "link", "invite"],
-      });
-      if (githubNav) {
-        commands.push(
-          {
-            id: "action:branches",
-            title: "Switch branch…",
-            group: "Actions",
-          },
-          {
-            id: "action:repos",
-            title: "Switch repository…",
-            group: "Actions",
-          },
-        );
-      }
-    }
-    for (const path of paletteFiles) {
-      commands.push({ id: `file:${path}`, title: path, group: "Files" });
-    }
-    return commands;
   }, [
     readOnly,
     isMarkdownDoc,
@@ -612,6 +573,12 @@ export function DocumentWorkspace({
         case "action:theme":
           setTheme(currentTheme() === "dark" ? "light" : "dark");
           closePalette();
+          break;
+        case "action:print":
+          // Close first: the palette is a fixed overlay, and print CSS hides it
+          // anyway — leaving it open would just obscure the page underneath.
+          closePalette();
+          printDocument();
           break;
         case "action:share":
           closePalette();
@@ -1154,7 +1121,10 @@ export function DocumentWorkspace({
     >
       {/* GitHub breadcrumb bar — above everything, only in GitHub mode */}
       {githubBreadcrumb ? (
-        <div className="mb-3 -mx-8 sm:-mx-12 px-8 sm:px-12 border-b border-slate-100 dark:border-slate-800 pb-2.5">
+        <div
+          data-print-hide
+          className="mb-3 -mx-8 sm:-mx-12 px-8 sm:px-12 border-b border-slate-100 dark:border-slate-800 pb-2.5"
+        >
           <nav
             aria-label="Document breadcrumb"
             className="flex min-w-0 flex-wrap items-center gap-0.5 text-xs text-stone-400 dark:text-stone-500"
@@ -1603,6 +1573,7 @@ export function DocumentWorkspace({
         {documentPage ? (
           <div
             data-testid="document-page-header"
+            data-print-hide
             className={cn(
               "document-page-shell mb-2 flex flex-col gap-6 text-[0.62rem] font-medium tracking-[0.01em] text-stone-400 min-[1100px]:grid min-[1100px]:grid-cols-[minmax(0,46.5rem)_minmax(24rem,1fr)] min-[1100px]:items-start min-[1100px]:justify-between min-[1100px]:gap-8",
               !documentHasComments &&
@@ -1760,6 +1731,24 @@ export function DocumentWorkspace({
                       </Tooltip>
                     ) : null}
                     {isMarkdownDoc ? (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <button
+                              type="button"
+                              data-testid="document-print-button"
+                              className="inline-flex h-[1.5rem] items-center justify-center rounded-full px-1 text-stone-400 outline-none transition hover:bg-[#EEE9E1] hover:text-stone-600 focus-visible:ring-2 focus-visible:ring-stone-300/70 dark:text-stone-500 dark:hover:bg-slate-800 dark:hover:text-stone-300 dark:focus-visible:ring-slate-600/70"
+                            >
+                              <Printer className="size-[0.78rem]" />
+                            </button>
+                          }
+                          aria-label="Export as PDF"
+                          onClick={printDocument}
+                        />
+                        <TooltipContent>Export as PDF</TooltipContent>
+                      </Tooltip>
+                    ) : null}
+                    {isMarkdownDoc ? (
                       <>
                         <Tooltip>
                           <TooltipTrigger
@@ -1865,6 +1854,7 @@ export function DocumentWorkspace({
               <div
                 className="document-comment-rail pointer-events-none invisible hidden min-[1100px]:block"
                 aria-hidden="true"
+                data-print-hide
               />
             ) : null}
           </div>
@@ -1875,7 +1865,7 @@ export function DocumentWorkspace({
               {backend?.capabilities.activityLog &&
               activeDocumentPath &&
               !agentBoxHidden ? (
-                <div className="mb-4">
+                <div className="mb-4" data-print-hide>
                   <InstructionSender
                     docPath={activeDocumentPath}
                     author={backend.info.authorLabel ?? "you"}

@@ -1,9 +1,49 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildDocumentPaletteCommands,
+  type DocumentPaletteContext,
   filterCommands,
   fuzzyScore,
   type PaletteCommand,
 } from "./command-palette";
+
+const markdownDoc: DocumentPaletteContext = {
+  readOnly: false,
+  isMarkdownDoc: true,
+  suggesting: false,
+  isGitHubBackend: false,
+  hasGitHubNav: false,
+  files: [],
+};
+
+describe("buildDocumentPaletteCommands", () => {
+  it("offers PDF export for a markdown document", () => {
+    const ids = buildDocumentPaletteCommands(markdownDoc).map((c) => c.id);
+    expect(ids).toContain("action:print");
+  });
+
+  it("offers PDF export to read-only viewers too", () => {
+    const commands = buildDocumentPaletteCommands({
+      ...markdownDoc,
+      readOnly: true,
+    });
+    expect(commands.map((c) => c.id)).toContain("action:print");
+  });
+
+  it("omits PDF export for non-markdown files", () => {
+    const commands = buildDocumentPaletteCommands({
+      ...markdownDoc,
+      isMarkdownDoc: false,
+    });
+    expect(commands.map((c) => c.id)).not.toContain("action:print");
+  });
+
+  it("finds PDF export by searching for 'print'", () => {
+    const commands = buildDocumentPaletteCommands(markdownDoc);
+    const ids = filterCommands(commands, "print").map((c) => c.id);
+    expect(ids).toContain("action:print");
+  });
+});
 
 describe("fuzzyScore", () => {
   it("returns null when the query is not a subsequence", () => {
