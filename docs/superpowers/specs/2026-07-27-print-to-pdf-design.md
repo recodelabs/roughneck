@@ -77,7 +77,8 @@ Print rules:
   fills and comment highlights are painted as backgrounds, which browsers drop
   unless the reader has "Background graphics" ticked — and those colours carry
   meaning.
-- `@page { margin: 0.75in }`
+- `@page { margin: 0 }`, with the 0.75in paper margin applied as padding on the
+  card plus `box-decoration-break: clone` — see "Browser header and footer"
 - break hints: `break-after: avoid` on headings; `break-inside: avoid` on `pre`,
   `blockquote`, `table`, `img`
 
@@ -87,9 +88,41 @@ One cascade trap is worth naming: the toolbar row is itself a
 equal specificity, so without the `:not()` the later one wins and the toolbar
 prints.
 
-CriticMarkup keeps its on-screen styling. No comment endnotes, no custom
-header/footer (the browser's own header/footer stays under the user's control in
-the print dialog).
+CriticMarkup keeps its on-screen styling. No comment endnotes.
+
+## Browser header and footer
+
+Chrome prints its own header and footer — page title, date, URL, page number —
+and no CSS property switches them off; it is a checkbox in the print dialog.
+The one lever CSS does have is where they are drawn: the page margin box. With
+`@page { margin: 0 }` there is no margin box, so they have nowhere to render.
+
+Zero page margins would normally mean text against the paper edge, so the
+0.75in margin moves onto the document card as padding. Padding alone would
+apply only to the first and last page fragment, leaving interior pages flush to
+the edge — `box-decoration-break: clone` repeats it on every fragment. This was
+verified in Chrome with a page break falling mid-paragraph, where nothing but
+cloned padding can hold the text off the top edge.
+
+Caveat: the margin behaviour is verified; the header suppression is not
+directly testable through Playwright, which draws its own header/footer via
+CDP when asked rather than following Chrome's dialog. The mechanism is
+well-established, but the final confirmation is a real ⌘P.
+
+## Mermaid diagrams
+
+A diagram is an absolutely-positioned overlay floating over a reserved gap,
+because ProseMirror reverts any change to its own DOM. Absolutely positioned
+boxes do not paginate: one meeting a page boundary is cut in half.
+
+For print the overlay is hidden and the same SVG is painted as a background
+image on the reserved `<pre>`, which *is* in the flow — so `break-inside: avoid`
+applies and the diagram moves to the next page whole. `MermaidOverlays` injects
+these rules into a third stylesheet (`mermaid-print.ts` builds the CSS), keeping
+the module's rule of never touching the editor's DOM. The SVG is
+percent-encoded so its quotes cannot terminate the `url()`, height comes from
+the diagram's aspect ratio so the paper width drives it, and a 7.5in cap keeps
+a tall diagram on one page.
 
 ## Dark mode
 
@@ -121,9 +154,6 @@ generating PDFs: chrome hidden, card stripped, dark-mode document printing
 light, headings and code blocks paginating intact across a 12-section document,
 and both triggers firing `window.print`.
 
-## Known limitation
-
-Mermaid diagrams are rendered as absolutely-positioned overlays over a reserved
-gap (see `MermaidOverlays`). An overlay that lands on a page boundary may clip
-rather than reflow. Text, tables, images, and code paginate normally. Fixing this
-would mean rearchitecting the mermaid renderer and is out of scope.
+Follow-up verification covered the mermaid path (a diagram placed to straddle a
+page break moves whole to the next page) and interior-page margins under
+`@page { margin: 0 }`.
