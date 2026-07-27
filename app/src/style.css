@@ -905,8 +905,14 @@
  * duration of the print, so nothing here needs a dark variant.
  */
 @media print {
+  /*
+   * Zero page margin, with the paper margin applied as padding on the document
+   * instead (below). This is the only lever CSS has over the browser's own
+   * header and footer — the printed URL, title, date and page number live in
+   * the page margin box, so a zero margin leaves them nowhere to render.
+   */
   @page {
-    margin: 0.75in;
+    margin: 0;
   }
 
   /*
@@ -945,6 +951,7 @@
    */
   [data-print-hide],
   [data-base-ui-portal],
+  [data-mermaid-overlay],
   .fixed,
   .document-comment-rail,
   .document-comment-fallback {
@@ -976,7 +983,17 @@
 
   [data-testid="document-content-card"] {
     max-width: none !important;
-    padding: 0 !important;
+
+    /*
+     * The paper margin. `box-decoration-break: clone` is what makes this safe
+     * on a long document: without it the padding would apply only to the first
+     * and last page fragment and interior pages would run text to the sheet
+     * edge. Verified in Chrome with a page break falling mid-paragraph.
+     */
+    padding: 0.75in !important;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+
     border: 0 !important;
     border-radius: 0 !important;
     background: #fff !important;

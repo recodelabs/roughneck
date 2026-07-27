@@ -16,6 +16,10 @@
  */
 
 import { useEffect } from "react";
+import {
+  buildMermaidPrintRules,
+  type MermaidPrintEntry,
+} from "./mermaid-print";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Mermaid = any;
@@ -250,7 +254,18 @@ function runMermaidOverlays(signal: AbortSignal): () => void {
     "pre:has(> code.language-mermaid) > code{opacity:0;}";
   (document.head || document.documentElement).appendChild(hideSheet);
 
-  type BoxEntry = { box: HTMLElement; pre: HTMLElement; aspect: number };
+  // Diagrams print as backgrounds on the reserved <pre> instead of as overlays,
+  // which cannot paginate — see `mermaid-print.ts`.
+  const printSheet = document.createElement("style");
+  printSheet.dataset.mermaidPrint = "true";
+  (document.head || document.documentElement).appendChild(printSheet);
+
+  type BoxEntry = {
+    box: HTMLElement;
+    pre: HTMLElement;
+    aspect: number;
+    svg: string;
+  };
   const done = new WeakSet<HTMLElement>();
   const boxes: BoxEntry[] = [];
   let idc = 0;
@@ -267,12 +282,14 @@ function runMermaidOverlays(signal: AbortSignal): () => void {
 
   function applySizes() {
     const rules: string[] = [];
+    const printEntries: MermaidPrintEntry[] = [];
     for (const entry of boxes) {
       if (!entry.pre.isConnected) continue;
       const par = entry.pre.parentElement;
       if (!par) continue;
       const idx = Array.prototype.indexOf.call(par.children, entry.pre) + 1;
       if (idx < 1) continue;
+      printEntries.push({ index: idx, svg: entry.svg, aspect: entry.aspect });
       const w = entry.pre.clientWidth || 700;
       const h = Math.min(
         Math.max(Math.round(w * entry.aspect) + 12, 70),
@@ -284,6 +301,7 @@ function runMermaidOverlays(signal: AbortSignal): () => void {
       );
     }
     sizeSheet.textContent = rules.join("");
+    printSheet.textContent = buildMermaidPrintRules(printEntries);
   }
 
   function reposition() {
@@ -361,8 +379,11 @@ function runMermaidOverlays(signal: AbortSignal): () => void {
             sv.removeAttribute("height");
           }
           box.onclick = () => openModal(svg);
+          // Hidden in print (style.css) in favour of the background-painted
+          // <pre>, which paginates.
+          box.dataset.mermaidOverlay = "true";
           scrollerEl.appendChild(box);
-          boxes.push({ box, pre, aspect });
+          boxes.push({ box, pre, aspect, svg });
           reposition();
         });
       })
@@ -436,6 +457,7 @@ function runMermaidOverlays(signal: AbortSignal): () => void {
     boxes.length = 0;
     sizeSheet.remove();
     hideSheet.remove();
+    printSheet.remove();
   };
 }
 
