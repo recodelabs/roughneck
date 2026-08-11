@@ -9,8 +9,18 @@
 # node (in case tooling is added later)
 node_modules/
 
+# vitest coverage output (reports to repo root from app/)
+coverage/
+
 # wrangler / cloudflare pages local state
 .wrangler/
+
+# python build artifacts
+__pycache__/
+*.pyc
+
+# playwright MCP recordings
+.playwright-mcp/
 
 # margins runner local config (state lives outside the repo)
 # one config per watched repo, e.g. runner/config.icr.json — all local, none committed

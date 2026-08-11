@@ -5,6 +5,7 @@ import { createEditorExtensions } from "./editor-extensions";
 import {
   buildSuggestionDeleteTransaction,
   buildSuggestionInputTransaction,
+  buildSuggestionMarkAdditionTransaction,
   computeKeyboardDeleteRange,
 } from "./suggesting-mode";
 
@@ -450,6 +451,113 @@ describe("Cut in suggesting mode should delete addition text, not mark it", () =
 
     const deletionMarks = marks.filter((m) => m.kind === "deletion");
     expect(deletionMarks.length).toBeGreaterThan(0);
+
+    editor.destroy();
+  });
+});
+
+describe("buildSuggestionMarkAdditionTransaction captures out-of-band inserts", () => {
+  function additionChangeIds(editor: Editor): Set<string> {
+    const ids = new Set<string>();
+    editor.state.doc.descendants((node) => {
+      if (!node.isText) return;
+      for (const mark of node.marks) {
+        if (
+          mark.type.name === "criticChange" &&
+          mark.attrs.kind === "addition"
+        ) {
+          ids.add(mark.attrs.changeId as string);
+        }
+      }
+    });
+    return ids;
+  }
+
+  it("marks a programmatically inserted (untracked) range as an addition", () => {
+    const editor = createTestEditor("<p>Hello world</p>");
+
+    // Simulate a context-menu paste / IME commit: text lands with no mark.
+    editor.view.dispatch(
+      editor.state.tr.insert(6, editor.state.schema.text("brave ")),
+    );
+
+    const tr = buildSuggestionMarkAdditionTransaction(
+      editor.state,
+      { from: 6, to: 6 + "brave ".length },
+      { markType: editor.state.schema.marks.criticChange, existingChanges: [] },
+    );
+    expect(tr.docChanged).toBe(true);
+    editor.view.dispatch(tr);
+
+    const marks = getMarks(editor);
+    expect(
+      marks.some((m) => m.kind === "addition" && m.text.includes("brave")),
+    ).toBe(true);
+    // Original text must not be swept into the addition.
+    expect(marks.some((m) => m.text.includes("Hello"))).toBe(false);
+
+    editor.destroy();
+  });
+
+  it("reuses an adjacent addition mark so the inserted run coalesces", () => {
+    const editor = createTestEditor("<p>Hello world</p>");
+
+    editor.view.dispatch(
+      editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 6)),
+    );
+    for (const char of "new") {
+      suggestingTypeChar(editor, char);
+    }
+    // Caret now sits at 9, just after the "new" addition.
+    editor.view.dispatch(
+      editor.state.tr.insert(9, editor.state.schema.text("er")),
+    );
+
+    const tr = buildSuggestionMarkAdditionTransaction(
+      editor.state,
+      { from: 9, to: 11 },
+      { markType: editor.state.schema.marks.criticChange, existingChanges: [] },
+    );
+    editor.view.dispatch(tr);
+
+    // "new" + "er" should belong to a single addition, not two change ids.
+    expect(additionChangeIds(editor).size).toBe(1);
+
+    editor.destroy();
+  });
+
+  it("leaves an already-tracked addition untouched (no re-mark, no re-mint)", () => {
+    const editor = createTestEditor("<p>Hello world</p>");
+
+    editor.view.dispatch(
+      editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 6)),
+    );
+    for (const char of "new") {
+      suggestingTypeChar(editor, char);
+    }
+    const idsBefore = additionChangeIds(editor);
+
+    const tr = buildSuggestionMarkAdditionTransaction(
+      editor.state,
+      { from: 6, to: 9 },
+      { markType: editor.state.schema.marks.criticChange, existingChanges: [] },
+    );
+    expect(tr.docChanged).toBe(false);
+
+    expect([...additionChangeIds(editor)]).toEqual([...idsBefore]);
+
+    editor.destroy();
+  });
+
+  it("returns an unchanged transaction for a collapsed range", () => {
+    const editor = createTestEditor("<p>Hello world</p>");
+
+    const tr = buildSuggestionMarkAdditionTransaction(
+      editor.state,
+      { from: 3, to: 3 },
+      { markType: editor.state.schema.marks.criticChange, existingChanges: [] },
+    );
+    expect(tr.docChanged).toBe(false);
 
     editor.destroy();
   });

@@ -41,6 +41,17 @@ describe("getInstallationToken", () => {
     expect(fetchMock.mock.calls[1][0]).toContain(
       "/app/installations/42/access_tokens",
     );
+
+    const mintCall = fetchMock.mock.calls[1];
+    const mintInit = mintCall[1] as RequestInit;
+    expect(mintInit.method).toBe("POST");
+    expect((mintInit.headers as Record<string, string>)["Content-Type"]).toBe(
+      "application/json",
+    );
+    expect(JSON.parse(mintInit.body as string)).toEqual({
+      repositories: ["r"],
+      permissions: { contents: "write" },
+    });
   });
 
   it("caches the token for the same repo (no second mint)", async () => {

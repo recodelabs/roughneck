@@ -75,10 +75,12 @@ they stop only on reboot or an explicit `kill-session`.
 ## Safety model
 
 The session runs under `runner/settings.json`, whose `PreToolUse` hook
-(`runner/guard.py`) allows only Read/Edit/Write inside the clone (plus the state
-dir) and the one `wait-for-task.sh` command. Everything else — `rm`, `curl`,
-other files, the network — is denied. The poller, which does have git/network, is
-a plain script and cannot be prompt-injected.
+(`runner/guard.py`) allows Read anywhere inside the clone (plus the state dir),
+but confines Edit/Write to the single doc named in the current task's
+`inbox.json` (plus the state dir), and allows only the one `wait-for-task.sh`
+command. Everything else — `rm`, `curl`, other files, the network — is denied.
+The poller, which does have git/network, is a plain script and cannot be
+prompt-injected.
 
 ## Tests
 

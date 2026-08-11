@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["lib/**/*.ts", "auth/**/*.ts"]
+    "includes": ["lib/**/*.ts", "auth/**/*.ts", "functions/**/*.ts"]
   },
   "formatter": {
     "enabled": true,

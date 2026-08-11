@@ -51,6 +51,7 @@ import type { Page, StorageBackend } from "./storage";
 import {
   buildSuggestionDeleteTransaction,
   buildSuggestionInputTransaction,
+  buildSuggestionMarkAdditionTransaction,
   computeKeyboardDeleteRange,
 } from "./suggesting-mode";
 import { useCommentAnchorLayout } from "./useCommentAnchorLayout";
@@ -655,6 +656,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
   );
   onContentTouchedRef.current = onContentTouched;
   const interactionModeRef = useRef<DocumentInteractionMode>(interactionMode);
+  const compositionAnchorRef = useRef<number | null>(null);
   const commentsRef = useRef<Map<string, CriticComment>>(new Map());
   const suppressNextMarkdownUpdateRef = useRef(false);
   const lastFocusRequestKeyRef = useRef<string | null>(null);
@@ -1083,6 +1085,59 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
           view.dispatch(tr);
           return true;
         },
+        handleDOMEvents: {
+          compositionstart: (view) => {
+            if (interactionModeRef.current === "suggesting") {
+              compositionAnchorRef.current = view.state.selection.from;
+            }
+            return false;
+          },
+          compositionend: () => {
+            if (interactionModeRef.current !== "suggesting") {
+              compositionAnchorRef.current = null;
+              return false;
+            }
+
+            const anchor = compositionAnchorRef.current;
+            compositionAnchorRef.current = null;
+            if (anchor == null) return false;
+
+            // ProseMirror commits IME-composed text (CJK, dead keys, dictation)
+            // out-of-band shortly after `compositionend` — via a microtask flush
+            // or a ~20ms fallback timer — so it never reaches `handleTextInput`.
+            // Defer past that flush, then flag the composed range as a tracked
+            // addition. We only extend forward from the caret recorded at
+            // `compositionstart`, so a stray caret move can never mis-mark
+            // already-committed text; the engine also skips runs that are
+            // already additions, so nothing is double-marked.
+            window.setTimeout(() => {
+              const currentEditor = editorRef.current;
+              if (!currentEditor) return;
+              if (interactionModeRef.current !== "suggesting") return;
+
+              const activeView = currentEditor.view;
+              if (activeView.composing) return;
+
+              const caret = activeView.state.selection.from;
+              if (caret <= anchor) return;
+
+              const tr = buildSuggestionMarkAdditionTransaction(
+                activeView.state,
+                { from: anchor, to: caret },
+                {
+                  markType: activeView.state.schema.marks.criticChange,
+                  changeAttrs: { authorId },
+                  existingChanges: getDocumentCriticChanges(currentEditor),
+                },
+              );
+              if (tr.docChanged) {
+                activeView.dispatch(tr.scrollIntoView());
+              }
+            }, 50);
+
+            return false;
+          },
+        },
       },
       onUpdate: () => {
         if (suppressNextMarkdownUpdateRef.current) {
@@ -1452,6 +1507,74 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
       text: "",
     });
   }, []);
+
+  // Routes the context menu's Paste / Paste Markdown items through the
+  // suggestion-capture engine while in suggesting mode, so programmatic inserts
+  // are tracked as additions rather than landing untracked.
+  const insertSuggestion = useCallback(
+    (
+      content: { type: "text"; text: string } | { type: "html"; html: string },
+    ) => {
+      const currentEditor = editorRef.current;
+      if (!currentEditor) return;
+      const { view } = currentEditor;
+
+      if (content.type === "text") {
+        const { selection } = view.state;
+        const tr = buildSuggestionInputTransaction(
+          view.state,
+          { from: selection.from, to: selection.to },
+          content.text,
+          {
+            markType: view.state.schema.marks.criticChange,
+            changeAttrs: { authorId },
+            existingChanges: getDocumentCriticChanges(currentEditor),
+          },
+        );
+        view.dispatch(tr.scrollIntoView());
+        return;
+      }
+
+      // Rich HTML can't flow through the plain-text engine. First convert any
+      // selected original text into a tracked deletion (so it isn't silently
+      // dropped), then insert the HTML and flag the inserted range as an
+      // addition.
+      const { selection } = view.state;
+      if (!selection.empty) {
+        const deleteTr = buildSuggestionDeleteTransaction(
+          view.state,
+          { from: selection.from, to: selection.to },
+          {
+            markType: view.state.schema.marks.criticChange,
+            changeAttrs: { authorId },
+            existingChanges: getDocumentCriticChanges(currentEditor),
+          },
+          { selectionBasePos: selection.to },
+        );
+        view.dispatch(deleteTr);
+      }
+
+      const insertFrom = currentEditor.state.selection.from;
+      currentEditor.chain().focus().insertContent(content.html).run();
+      const insertTo = currentEditor.state.selection.from;
+
+      if (insertTo > insertFrom) {
+        const markTr = buildSuggestionMarkAdditionTransaction(
+          currentEditor.state,
+          { from: insertFrom, to: insertTo },
+          {
+            markType: currentEditor.state.schema.marks.criticChange,
+            changeAttrs: { authorId },
+            existingChanges: getDocumentCriticChanges(currentEditor),
+          },
+        );
+        if (markTr.docChanged) {
+          currentEditor.view.dispatch(markTr.scrollIntoView());
+        }
+      }
+    },
+    [authorId],
+  );
 
   const applyDraftSuggestion = useCallback(() => {
     const currentEditor = editorRef.current;
@@ -1937,6 +2060,11 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
                   interactionMode === "viewing"
                     ? undefined
                     : handleSuggestInsertion
+                }
+                onInsertSuggestion={
+                  interactionMode === "suggesting"
+                    ? insertSuggestion
+                    : undefined
                 }
               >
                 <div data-testid="rich-text-editor">

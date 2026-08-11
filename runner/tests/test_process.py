@@ -1,6 +1,7 @@
 import unittest
 
 from runner.config import Config
+from runner.git_ops import MergeConflict
 from runner.poller import Deps, _push_reconciling, process_one
 
 
@@ -54,27 +55,42 @@ class TestPushReconciling(unittest.TestCase):
 
 
 class FakeGit:
-    def __init__(self, logs, files):
+    def __init__(self, logs, files, pull_raises=None):
         self._logs = dict(logs)
         self._files = dict(files)
         self.pulled = False
+        self.pull_calls = 0
+        # Optional list of exceptions (or None) to raise on successive pull()
+        # calls, consumed in order; once exhausted, pull() succeeds normally.
+        self.pull_raises = list(pull_raises or [])
         self.pushed = False
+        self.try_push_count = 0
         self.merges = 0
+        self.reset_hard_calls = []
         self.checked_out = []
         self.commits = []  # (paths, message)
 
     def pull(self, branch):
+        self.pull_calls += 1
+        if self.pull_raises:
+            exc = self.pull_raises.pop(0)
+            if exc is not None:
+                raise exc
         self.pulled = True
 
     def push(self, branch):
         self.pushed = True
 
     def try_push(self, branch):
+        self.try_push_count += 1
         self.pushed = True
         return True
 
     def fetch_and_merge(self, branch):
         self.merges += 1
+
+    def reset_hard_to_origin(self, branch):
+        self.reset_hard_calls.append(branch)
 
     def list_activity_logs(self):
         return dict(self._logs)
@@ -186,6 +202,64 @@ class TestProcessOne(unittest.TestCase):
         self.assertNotIn("commit", reply)
         self.assertTrue(state.cleared)
         self.assertTrue(git.pushed)
+
+    def test_stale_done_mismatched_replyto_not_attributed(self):
+        # A leftover done.json from a PREVIOUS instruction ("i0") must not be
+        # attributed to the new instruction ("i1"): treated as not-done, so the
+        # doc is never committed with the stale summary.
+        git = FakeGit(self._logs_with_one_pending(), {"a.md": "# Title\n"})
+        state = FakeState(done={"status": "done", "summary": "old task", "replyTo": "i0"})
+        process_one(_deps(git, state, state._done), CONFIG)
+
+        from runner.margins_log import parse_activity_log
+        reply = [e for e in parse_activity_log(git._logs[".margins/a.md.activity.jsonl"]) if e.get("role") == "agent"][0]
+        self.assertEqual(reply["status"], "error")
+        self.assertEqual(reply["error"], "timeout")
+        self.assertNotIn("old task", reply.get("summary", ""))
+        # No doc commit — only the reply log was committed.
+        self.assertEqual(len(git.commits), 1)
+        self.assertEqual(git.commits[0][0], [".margins/a.md.activity.jsonl"])
+
+    def test_matching_replyto_completes_normally(self):
+        git = FakeGit(self._logs_with_one_pending(), {"a.md": "# Title\n"})
+        state = FakeState(done={"status": "done", "summary": "applied", "replyTo": "i1"})
+        handled = process_one(_deps(git, state, state._done), CONFIG)
+        self.assertTrue(handled)
+        self.assertEqual(git.commits[0][0], ["a.md"])
+        from runner.margins_log import parse_activity_log
+        reply = [e for e in parse_activity_log(git._logs[".margins/a.md.activity.jsonl"]) if e.get("role") == "agent"][0]
+        self.assertEqual(reply["status"], "done")
+        self.assertEqual(reply["summary"], "applied")
+
+    def test_pull_conflict_recovers_without_wedging(self):
+        # A real merge conflict must never wedge the loop: process_one resets
+        # to origin, logs a warning, and returns False (recovered) instead of
+        # letting MergeConflict propagate. No instruction is dispatched.
+        git = FakeGit(
+            self._logs_with_one_pending(), {"a.md": "# Title\n"},
+            pull_raises=[MergeConflict("boom")],
+        )
+        state = FakeState(done={"status": "done", "summary": "applied", "replyTo": "i1"})
+        handled = process_one(_deps(git, state, state._done), CONFIG)
+
+        self.assertFalse(handled)
+        self.assertEqual(git.reset_hard_calls, ["main"])
+        self.assertIsNone(state.inbox)  # never dispatched — conflict was at pull time
+        self.assertFalse(state.cleared)
+
+        # A follow-up cycle with a now-clean pull proceeds normally (not wedged).
+        handled2 = process_one(_deps(git, state, state._done), CONFIG)
+        self.assertTrue(handled2)
+        self.assertEqual(state.inbox["instructionId"], "i1")
+
+    def test_process_one_flushes_stranded_push_at_top(self):
+        # RUN-4: a best-effort try_push at the top of every cycle flushes
+        # commits stranded by a prior failed push, even before the pull.
+        git = FakeGit(self._logs_with_one_pending(), {"a.md": "# Title\n"})
+        state = FakeState(done={"status": "done", "summary": "applied", "replyTo": "i1"})
+        process_one(_deps(git, state, state._done), CONFIG)
+        # One flush at the top, one via _push_reconciling after the reply commit.
+        self.assertEqual(git.try_push_count, 2)
 
     def test_timeout_appends_error_reply(self):
         git = FakeGit(self._logs_with_one_pending(), {"a.md": "# Title\n"})

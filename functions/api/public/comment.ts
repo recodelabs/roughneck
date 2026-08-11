@@ -1,4 +1,7 @@
-import { type CommentRequest, handlePublicComment } from "../../../lib/public-comment";
+import {
+  type CommentRequest,
+  handlePublicComment,
+} from "../../../lib/public-comment";
 
 interface Env {
   GITHUB_APP_ID: string;

@@ -150,6 +150,8 @@ export class GitHubBackend implements StorageBackend {
   private workingBranchEnsured = false;
   /** In-flight ensure, so concurrent saves don't each try to create the branch. */
   private ensurePromise: Promise<void> | null = null;
+  /** In-flight probe for a pre-existing working branch, cached per session. */
+  private probePromise: Promise<void> | null = null;
   /** Cached open-PR URL, so we only create/look it up once per session. */
   private prUrl: string | null = null;
 
@@ -251,6 +253,47 @@ export class GitHubBackend implements StorageBackend {
   }
 
   /**
+   * In propose-changes mode, detect a working branch left over from a previous
+   * session and adopt it up front. The branch name is stable per user+base, so
+   * it may already carry commits and an open PR. Without this, reads come from
+   * the base branch until the first write flips {@link workingBranchEnsured} —
+   * which both hides the user's own proposed changes in the editor and makes
+   * the first save PUT a base-branch sha against a diverged working branch,
+   * producing a spurious {@link MarkdownFileConflictError}. Adopting the branch
+   * first means reads and the first save both use its real sha.
+   *
+   * A no-op in direct mode or once the branch is known. On 404 (not created
+   * yet) we leave it to the create-on-demand write path. Cached per session and
+   * best-effort: a failed probe is swallowed so a read never fails because of
+   * it, and reset so a later call can retry (falling back to create-on-demand).
+   */
+  private probeWorkingBranch(): Promise<void> {
+    if (!this.proposeChanges || this.workingBranchEnsured) {
+      return Promise.resolve();
+    }
+    if (!this.probePromise) {
+      this.probePromise = this.adoptExistingWorkingBranch().then(
+        undefined,
+        () => {
+          this.probePromise = null;
+        },
+      );
+    }
+    return this.probePromise;
+  }
+
+  private async adoptExistingWorkingBranch(): Promise<void> {
+    const { owner, repo } = this.cfg;
+    const res = await githubFetch(
+      `${API}/repos/${owner}/${repo}/git/ref/heads/${this.workingBranch}`,
+      { headers: this.headers() },
+    );
+    // 200 → the branch is already there; adopt it so `this.ref` resolves to it
+    // for reads and the first save. 404 → not created yet; leave it be.
+    if (res.ok) this.workingBranchEnsured = true;
+  }
+
+  /**
    * Make sure an open PR exists from the working branch back to the base, and
    * cache its URL. Best-effort: the commit has already landed, so a PR failure
    * is logged rather than thrown (it would otherwise fail an otherwise-good
@@ -349,6 +392,10 @@ export class GitHubBackend implements StorageBackend {
     if (!isSupportedPath(relativePath)) {
       throw new Error("This file type can't be opened in margins");
     }
+    // Adopt any pre-existing working branch so the returned version is the
+    // working branch's sha — otherwise the first save would PUT a base-branch
+    // sha against a diverged branch and spuriously conflict.
+    await this.probeWorkingBranch();
     return this.readFile(relativePath);
   }
 
@@ -494,6 +541,7 @@ export class GitHubBackend implements StorageBackend {
   }
 
   async readActivityLog(docPath: string): Promise<ActivityEntry[]> {
+    await this.probeWorkingBranch();
     const raw = await this.readActivityRaw(activityLogPath(docPath));
     return raw ? parseActivityLog(raw.text) : [];
   }
@@ -504,8 +552,15 @@ export class GitHubBackend implements StorageBackend {
   ): () => void {
     let disposed = false;
     let lastSig: string | null = null;
+    // Guard against poll pile-up: if a tick runs slow (or hangs), the interval
+    // keeps firing. Without this, successive ticks would stack unbounded
+    // concurrent requests against the same doc. Skip a tick while one is still
+    // outstanding so at most one activity request is in flight at a time.
+    let inFlight = false;
 
     const tick = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const entries = await this.readActivityLog(docPath);
         if (disposed) return;
@@ -516,6 +571,8 @@ export class GitHubBackend implements StorageBackend {
         }
       } catch (error) {
         console.error("activity-log poll failed:", error);
+      } finally {
+        inFlight = false;
       }
     };
 
@@ -579,6 +636,7 @@ export class GitHubBackend implements StorageBackend {
   }
 
   async listMarkdownPaths(): Promise<FileMeta[]> {
+    await this.probeWorkingBranch();
     const { owner, repo } = this.cfg;
     const url = `${API}/repos/${owner}/${repo}/git/trees/${this.ref}?recursive=1`;
     return githubGet(url, this.headers(), async (res) => {
@@ -614,6 +672,7 @@ export class GitHubBackend implements StorageBackend {
     const result = new Map<string, FileCommitInfo>();
     if (paths.length === 0) return result;
 
+    await this.probeWorkingBranch();
     const { owner, repo } = this.cfg;
     const ref = this.ref;
     const fields = paths
@@ -680,10 +739,15 @@ export class GitHubBackend implements StorageBackend {
     relativePath: string,
     limit = 20,
   ): Promise<FileCommit[]> {
-    const { owner, repo, branch } = this.cfg;
+    // Adopt any pre-existing working branch and query `this.ref` (like
+    // listPathCommitInfo) so the user's own working-branch commits show up in
+    // history instead of only the base branch's.
+    await this.probeWorkingBranch();
+    const { owner, repo } = this.cfg;
+    const ref = this.ref;
     const query =
       `query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(repo)}) { ` +
-      `object(expression: ${JSON.stringify(branch)}) { ... on Commit { ` +
+      `object(expression: ${JSON.stringify(ref)}) { ... on Commit { ` +
       `history(first: ${limit}, path: ${JSON.stringify(relativePath)}) { ` +
       `nodes { oid messageHeadline committedDate author { name user { login } } } } } } } }`;
 
@@ -760,7 +824,12 @@ export class GitHubBackend implements StorageBackend {
    * a clear error.
    */
   async saveAsset(file: File): Promise<StoredAsset> {
-    const { owner, repo, branch } = this.cfg;
+    // In propose-changes mode, create/adopt the working branch first so both
+    // the dedupe existence-check read and the commit below target it — a pasted
+    // image must land on the PR branch, not silently on the base branch. A
+    // no-op in direct mode, where `this.ref` stays the base branch.
+    await this.ensureWorkingBranch();
+    const { owner, repo } = this.cfg;
     const mimeType = file.type || "application/octet-stream";
     const bytes = new Uint8Array(await file.arrayBuffer());
     const path = assetPath(file.name, await sha256Hex(bytes));
@@ -788,7 +857,7 @@ export class GitHubBackend implements StorageBackend {
         body: JSON.stringify({
           message: `chore(margins): add asset ${path}`,
           content: encodeBase64Bytes(bytes),
-          branch,
+          branch: this.ref,
         }),
       },
     );
