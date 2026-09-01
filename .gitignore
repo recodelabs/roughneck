@@ -12,6 +12,9 @@ node_modules/
 # wrangler / cloudflare pages local state
 .wrangler/
 
+# secrets — GitHub App private keys must never be committed
+*.pem
+
 # margins runner local config (state lives outside the repo)
 # one config per watched repo, e.g. runner/config.icr.json — all local, none committed
 runner/config.json
