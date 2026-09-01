@@ -38,6 +38,13 @@ def enforce(tool_name: str, tool_input: dict, clone: str, state_dir: str) -> tup
     """Return ("allow"|"deny", reason)."""
     if tool_name in ("Read", "Edit", "Write"):
         path = tool_input.get("file_path", "")
+        # Never touch the clone's .git dir: a prompt-injected doc could write
+        # .git/hooks/post-commit or rewrite .git/config, which the trusted
+        # poller would then execute on its next git op. Check via realpath so a
+        # symlink can't dodge the block. This is checked before the allow so it
+        # overrides the clone allowance.
+        if path and clone and _within(path, os.path.join(os.path.realpath(clone), ".git")):
+            return ("deny", f"{tool_name} into the clone's .git directory is forbidden")
         if path and (_within(path, clone) or _within(path, state_dir)):
             return ("allow", "")
         return ("deny", f"{tool_name} is restricted to the clone and state dir")

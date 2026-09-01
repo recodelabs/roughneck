@@ -187,6 +187,34 @@ class TestProcessOne(unittest.TestCase):
         self.assertTrue(state.cleared)
         self.assertTrue(git.pushed)
 
+    def test_stale_done_mismatched_replyto_not_attributed(self):
+        # A leftover done.json from a PREVIOUS instruction ("i0") must not be
+        # attributed to the new instruction ("i1"): treated as not-done, so the
+        # doc is never committed with the stale summary.
+        git = FakeGit(self._logs_with_one_pending(), {"a.md": "# Title\n"})
+        state = FakeState(done={"status": "done", "summary": "old task", "replyTo": "i0"})
+        process_one(_deps(git, state, state._done), CONFIG)
+
+        from runner.margins_log import parse_activity_log
+        reply = [e for e in parse_activity_log(git._logs[".margins/a.md.activity.jsonl"]) if e.get("role") == "agent"][0]
+        self.assertEqual(reply["status"], "error")
+        self.assertEqual(reply["error"], "timeout")
+        self.assertNotIn("old task", reply.get("summary", ""))
+        # No doc commit — only the reply log was committed.
+        self.assertEqual(len(git.commits), 1)
+        self.assertEqual(git.commits[0][0], [".margins/a.md.activity.jsonl"])
+
+    def test_matching_replyto_completes_normally(self):
+        git = FakeGit(self._logs_with_one_pending(), {"a.md": "# Title\n"})
+        state = FakeState(done={"status": "done", "summary": "applied", "replyTo": "i1"})
+        handled = process_one(_deps(git, state, state._done), CONFIG)
+        self.assertTrue(handled)
+        self.assertEqual(git.commits[0][0], ["a.md"])
+        from runner.margins_log import parse_activity_log
+        reply = [e for e in parse_activity_log(git._logs[".margins/a.md.activity.jsonl"]) if e.get("role") == "agent"][0]
+        self.assertEqual(reply["status"], "done")
+        self.assertEqual(reply["summary"], "applied")
+
     def test_timeout_appends_error_reply(self):
         git = FakeGit(self._logs_with_one_pending(), {"a.md": "# Title\n"})
         state = FakeState(done=None)  # session never writes done.json

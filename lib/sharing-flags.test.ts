@@ -33,8 +33,48 @@ describe("readSharingFlags", () => {
     expect(readSharingFlags(md).public).toBe(false);
   });
 
-  it("is case-insensitive on the value and tolerates trailing spaces/comments", () => {
-    const md = "---\npublic:   TRUE  # opt in\n---\n";
-    expect(readSharingFlags(md).public).toBe(true);
+  it("accepts YAML boolean-true spellings and tolerates trailing spaces/comments", () => {
+    // `true`/`True`/`TRUE` are the only core-schema booleans; a trailing `#`
+    // comment (after whitespace) is fine.
+    expect(readSharingFlags("---\npublic:   TRUE  # opt in\n---\n").public).toBe(
+      true,
+    );
+    expect(readSharingFlags("---\npublic: True\n---\n").public).toBe(true);
+  });
+
+  it("does NOT treat a capitalized `Public:` key as the public flag (fail closed)", () => {
+    // The reported divergence: a case-insensitive server would serve this
+    // publicly while the app (exact-key YAML) shows it private.
+    expect(readSharingFlags("---\nPublic: true\n---\n").public).toBe(false);
+  });
+
+  it("treats quoted, mistyped, or run-together values as not-true", () => {
+    // `"true"` is a YAML string, `yes` is a string in YAML 1.2, and
+    // `public:true` (no space) is a plain scalar, not a mapping.
+    expect(readSharingFlags('---\npublic: "true"\n---\n').public).toBe(false);
+    expect(readSharingFlags("---\npublic: yes\n---\n").public).toBe(false);
+    expect(readSharingFlags("---\npublic:true\n---\n").public).toBe(false);
+  });
+
+  it("ignores an indented (non-top-level) key", () => {
+    expect(readSharingFlags("---\nmeta:\n  public: true\n---\n").public).toBe(
+      false,
+    );
+  });
+
+  it("fails closed when the frontmatter block is unparseable (unbalanced flow)", () => {
+    // The app's whole-document parse throws here, yielding all-false; the server
+    // must not read `public: true` out of the broken block.
+    const md = "---\npublic: true\ntags: [a, b\n---\n";
+    expect(readSharingFlags(md).public).toBe(false);
+  });
+
+  it("still reads flags alongside a balanced list value", () => {
+    const md = "---\ntags: [a, b]\npublic: true\ncomments: true\n---\n";
+    expect(readSharingFlags(md)).toEqual({
+      public: true,
+      comments: true,
+      suggestions: false,
+    });
   });
 });

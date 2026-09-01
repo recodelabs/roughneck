@@ -70,6 +70,7 @@ describe("GitHubBackend", () => {
           Authorization: "Bearer tok",
           Accept: "application/vnd.github+json",
         },
+        signal: expect.any(AbortSignal),
       },
     );
     expect(page.content).toBe("# Hello\n\nbody");
@@ -111,6 +112,7 @@ describe("GitHubBackend", () => {
           sha: "abc123",
           branch: "main",
         }),
+        signal: expect.any(AbortSignal),
       },
     );
     expect(page?.version).toBe("def456");
@@ -181,6 +183,7 @@ describe("GitHubBackend", () => {
           Authorization: "Bearer tok",
           Accept: "application/vnd.github+json",
         },
+        signal: expect.any(AbortSignal),
       },
     );
     // .md/.json/.yaml/.txt/.fsh are listed; .png and .ts are skipped.
@@ -384,6 +387,7 @@ describe("GitHubBackend", () => {
             Authorization: "Bearer tok",
             Accept: "application/vnd.github+json",
           },
+          signal: expect.any(AbortSignal),
         },
       );
       expect(content).toBe("# Old\n\nbody");
@@ -859,6 +863,7 @@ describe("GitHubBackend", () => {
             content: b64("# Untitled\n"),
             branch: "main",
           }),
+          signal: expect.any(AbortSignal),
         },
       );
       expect(page?.version).toBe("new1");
@@ -951,7 +956,7 @@ describe("GitHubBackend", () => {
         instruction: "apply",
       });
       const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-        if (!init || init.method !== "PUT") {
+        if (init?.method !== "PUT") {
           return new Response(
             JSON.stringify({
               sha: "log-sha",
@@ -1162,6 +1167,51 @@ describe("GitHubBackend", () => {
     );
 
     expect(seen).toEqual([1, 2]);
+    vi.useRealTimers();
+  });
+
+  it("watchActivityLog skips a tick while the previous request is still in flight", async () => {
+    vi.useFakeTimers();
+    // A fetch that stays pending until we release it, so the baseline tick is
+    // still outstanding when the next interval fires.
+    let releaseFetch: (() => void) | null = null;
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          releaseFetch = () =>
+            resolve(
+              new Response(
+                JSON.stringify({
+                  sha: "s",
+                  content: b64(""),
+                  encoding: "base64",
+                }),
+                { status: 200 },
+              ),
+            );
+        }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const stop = backend().watchActivityLog("doc.md", () => {});
+
+    // Immediate baseline tick issues one request that stays pending.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Two intervals fire while the first tick is still outstanding: both skip,
+    // so no extra concurrent request piles up.
+    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Once the in-flight request settles, the next interval issues a fresh one.
+    releaseFetch?.();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    stop();
     vi.useRealTimers();
   });
 
@@ -1452,6 +1502,10 @@ describe("GitHubBackend", () => {
       const b = backend();
       b.setProposeChanges(true);
       const calls = route((url, method) => {
+        // The pre-existing-branch probe: this branch isn't there yet.
+        if (url.includes("/git/ref/heads/margins/octocat/main")) {
+          return new Response("Not Found", { status: 404 });
+        }
         if (url.includes("/git/trees/")) {
           return new Response(JSON.stringify({ tree: [] }), { status: 200 });
         }
@@ -1509,6 +1563,137 @@ describe("GitHubBackend", () => {
       // No branch/PR machinery was touched.
       expect(calls.every((c) => !c.url.includes("/git/refs"))).toBe(true);
       expect(calls.every((c) => !c.url.endsWith("/pulls"))).toBe(true);
+    });
+
+    it("saveAsset commits to the working branch (not the base branch) in propose mode", async () => {
+      const b = backend();
+      b.setProposeChanges(true);
+      const calls = route((url, method) => {
+        if (url.includes("/git/ref/heads/main")) {
+          return new Response(JSON.stringify({ object: { sha: "basesha" } }), {
+            status: 200,
+          });
+        }
+        if (url.endsWith("/git/refs") && method === "POST") {
+          return new Response("{}", { status: 201 });
+        }
+        // Dedupe existence check: not present yet.
+        if (url.includes("/contents/assets/") && method === "GET") {
+          return new Response("Not Found", { status: 404 });
+        }
+        if (url.includes("/contents/assets/") && method === "PUT") {
+          return new Response(
+            JSON.stringify({ content: { sha: "assetsha" } }),
+            {
+              status: 201,
+            },
+          );
+        }
+        throw new Error(`unexpected ${method} ${url}`);
+      });
+
+      await b.saveAsset(new File(["hi"], "pic.png", { type: "image/png" }));
+
+      // Both the existence-check read and the commit target the working branch.
+      const check = calls.find(
+        (c) => c.url.includes("/contents/assets/") && c.method === "GET",
+      );
+      expect(check?.url).toContain("ref=margins/octocat/main");
+      const put = calls.find(
+        (c) => c.url.includes("/contents/assets/") && c.method === "PUT",
+      );
+      expect(put?.body.branch).toBe("margins/octocat/main");
+    });
+
+    it("listFileHistory queries the working branch (this.ref) once adopted", async () => {
+      const b = backend();
+      b.setProposeChanges(true);
+      const calls = route((url, method) => {
+        // Probe: the working branch already exists — adopt it.
+        if (url.includes("/git/ref/heads/margins/octocat/main")) {
+          return new Response(JSON.stringify({ object: { sha: "worksha" } }), {
+            status: 200,
+          });
+        }
+        if (url.endsWith("/graphql")) {
+          return new Response(
+            JSON.stringify({
+              data: { repository: { object: { history: { nodes: [] } } } },
+            }),
+            { status: 200 },
+          );
+        }
+        throw new Error(`unexpected ${method} ${url}`);
+      });
+
+      await b.listFileHistory("docs/x.md");
+
+      const gql = calls.find((c) => c.url.endsWith("/graphql"));
+      // The GraphQL object(expression) uses the working branch, not base "main".
+      expect(String(gql?.body.query)).toContain("margins/octocat/main");
+    });
+
+    it("a reused, pre-existing working branch does not spuriously conflict on first save", async () => {
+      const b = backend();
+      b.setProposeChanges(true);
+      const calls = route((url, method) => {
+        // Probe finds the working branch (left over from a prior session).
+        if (url.includes("/git/ref/heads/margins/octocat/main")) {
+          return new Response(JSON.stringify({ object: { sha: "worksha" } }), {
+            status: 200,
+          });
+        }
+        // The read comes from the working branch: its real sha + content.
+        if (url.includes("/contents/docs/x.md") && method === "GET") {
+          return new Response(
+            JSON.stringify({
+              sha: "worksha",
+              content: b64("# working\n"),
+              encoding: "base64",
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.includes("/contents/docs/x.md") && method === "PUT") {
+          return new Response(
+            JSON.stringify({ content: { sha: "worksha2" } }),
+            {
+              status: 200,
+            },
+          );
+        }
+        if (url.endsWith("/pulls") && method === "POST") {
+          return new Response(
+            JSON.stringify({ html_url: "https://github.com/o/r/pull/5" }),
+            { status: 201 },
+          );
+        }
+        throw new Error(`unexpected ${method} ${url}`);
+      });
+
+      // Opening the doc reflects the working branch, not stale base content.
+      const opened = await b.getMarkdownFile("docs/x.md");
+      expect(opened.version).toBe("worksha");
+      expect(opened.content).toBe("# working\n");
+      const read = calls.find(
+        (c) => c.url.includes("/contents/docs/x.md") && c.method === "GET",
+      );
+      expect(read?.url).toContain("ref=margins/octocat/main");
+
+      // The first save PUTs the working branch sha against the working branch —
+      // no re-create (branch was adopted via probe), no phantom conflict.
+      const page = await b.saveMarkdownFile(
+        "docs/x.md",
+        "# edited\n",
+        "worksha",
+      );
+      expect(page.version).toBe("worksha2");
+      const put = calls.find(
+        (c) => c.url.includes("/contents/docs/x.md") && c.method === "PUT",
+      );
+      expect(put?.body.branch).toBe("margins/octocat/main");
+      expect(put?.body.sha).toBe("worksha");
+      expect(calls.every((c) => !c.url.endsWith("/git/refs"))).toBe(true);
     });
   });
 });

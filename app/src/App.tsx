@@ -745,7 +745,14 @@ export function App() {
       const currentPath = activeDocumentPathRef.current;
       const currentDocument = documentPageRef.current;
       if (!currentBackend || !currentPath || !currentDocument) return;
-      const updated = setSharingFlag(currentDocument.content, "public", next);
+      // Apply the flag to the editor's live draft, not just the last-synced
+      // server content: in manual-commit (GitHub) mode the editor stays dirty
+      // for the whole session, so folding the flag only into currentDocument
+      // would leave the draft without it — the user's next Commit would then
+      // overwrite the frontmatter and silently un-share the doc.
+      const base =
+        documentSession.getSnapshot().draftContent ?? currentDocument.content;
+      const updated = setSharingFlag(base, "public", next);
       // Apply the page the save returns rather than re-reading: GitHub's Contents
       // API is eventually consistent, so an immediate re-read often serves the
       // pre-commit blob and the controlled Share checkbox snaps back off. The
@@ -759,6 +766,12 @@ export function App() {
       applyDocumentPage(savedDocument);
       documentSession.setDirty(false);
       setDocumentDiskChangeState("clean");
+      // Push the merged content (the user's edits + the new flag) into the
+      // editor, overriding its dirty-guard so it no longer holds a draft that
+      // lacks the flag (mirrors handleOverwriteDocumentOnDisk).
+      setDocumentForceResetKey(
+        `${currentPath}:${savedDocument.version ?? Date.now()}:share`,
+      );
     },
     [applyDocumentPage, documentSession],
   );
@@ -769,7 +782,11 @@ export function App() {
       const currentPath = activeDocumentPathRef.current;
       const currentDocument = documentPageRef.current;
       if (!currentBackend || !currentPath || !currentDocument) return;
-      const updated = setSharingFlag(currentDocument.content, "comments", next);
+      // See handleSetPublic: fold the flag into the editor's live draft so a
+      // dirty manual-commit session can't overwrite it on the next Commit.
+      const base =
+        documentSession.getSnapshot().draftContent ?? currentDocument.content;
+      const updated = setSharingFlag(base, "comments", next);
       // See handleSetPublic: apply the save's returned page instead of re-reading,
       // so the toggle reflects immediately despite GitHub's eventual consistency.
       const savedDocument = await currentBackend.saveMarkdownFile(
@@ -780,6 +797,9 @@ export function App() {
       applyDocumentPage(savedDocument);
       documentSession.setDirty(false);
       setDocumentDiskChangeState("clean");
+      setDocumentForceResetKey(
+        `${currentPath}:${savedDocument.version ?? Date.now()}:share`,
+      );
     },
     [applyDocumentPage, documentSession],
   );

@@ -34,3 +34,37 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  runner-tests:
+    name: python runner tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Configure git identity
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+
+      - name: Run runner tests
+        run: python3 -m unittest discover -s runner/tests -t . -q
+
+  cli-check:
+    name: bash CLI syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax-check shell scripts
+        run: bash -n margins runner/launch-session.sh runner/wait-for-task.sh
+
+      - name: ShellCheck (non-blocking)
+        continue-on-error: true
+        run: |
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck margins runner/launch-session.sh runner/wait-for-task.sh || true
+          fi

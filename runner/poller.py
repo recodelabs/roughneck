@@ -79,6 +79,12 @@ def process_one(deps: Deps, config: Config) -> bool:
     # Reset the doc to a clean committed state (crash-safe restart).
     deps.git.checkout_file(doc_path)
 
+    # Drop any leftover done.json BEFORE dispatching the new instruction. A
+    # timeout or crash between read-done and clear-task can leave a stale
+    # sentinel; if we didn't clear it, _wait_for_done could instantly attribute
+    # the previous task's summary to this instruction and discard its real edit.
+    deps.state.clear_task()
+
     deps.state.write_inbox(
         {
             "instructionId": instruction["id"],
@@ -88,7 +94,7 @@ def process_one(deps: Deps, config: Config) -> bool:
         }
     )
 
-    done = _wait_for_done(deps, config.task_timeout_seconds)
+    done = _wait_for_done(deps, config.task_timeout_seconds, instruction["id"])
 
     if done is None:
         reply = build_reply_entry(
@@ -128,16 +134,26 @@ def process_one(deps: Deps, config: Config) -> bool:
     return True
 
 
-def _wait_for_done(deps: Deps, timeout_seconds: int) -> dict | None:
-    """Poll for the session's done sentinel; return it, or None on timeout."""
+def _wait_for_done(deps: Deps, timeout_seconds: int, instruction_id: str) -> dict | None:
+    """Poll for the session's done sentinel; return it, or None on timeout.
+
+    Only accept a sentinel whose ``replyTo`` matches the dispatched instruction.
+    A leftover done.json from a previous task (mismatched replyTo) is treated as
+    "not done yet" so we never commit an unmodified doc under the wrong id."""
+    def _fresh() -> dict | None:
+        done = deps.state.read_done()
+        if done is not None and done.get("replyTo") == instruction_id:
+            return done
+        return None
+
     waited = 0
     while waited < timeout_seconds:
-        done = deps.state.read_done()
+        done = _fresh()
         if done is not None:
             return done
         deps.sleep(2)
         waited += 2
-    return deps.state.read_done()
+    return _fresh()
 
 
 def run_forever(deps: Deps, config: Config) -> None:  # pragma: no cover - thin loop

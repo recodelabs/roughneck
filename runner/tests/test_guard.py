@@ -62,6 +62,29 @@ class TestEnforce(unittest.TestCase):
         decision, _ = self._enforce("Read", {"file_path": os.path.join(self.clone, "..", "secret")})
         self.assertEqual(decision, "deny")
 
+    def test_write_into_git_dir_denied(self):
+        # A prompt-injected doc must not be able to plant a hook or rewrite
+        # config that the trusted poller would later execute.
+        os.makedirs(os.path.join(self.clone, ".git", "hooks"))
+        hook = os.path.join(self.clone, ".git", "hooks", "post-commit")
+        decision, reason = self._enforce("Write", {"file_path": hook})
+        self.assertEqual(decision, "deny")
+        self.assertIn(".git", reason)
+
+    def test_write_git_config_denied(self):
+        os.makedirs(os.path.join(self.clone, ".git"))
+        cfg = os.path.join(self.clone, ".git", "config")
+        decision, _ = self._enforce("Write", {"file_path": cfg})
+        self.assertEqual(decision, "deny")
+
+    def test_normal_doc_in_clone_still_allowed(self):
+        decision, _ = self._enforce("Write", {"file_path": os.path.join(self.clone, "doc.md")})
+        self.assertEqual(decision, "allow")
+
+    def test_state_dir_path_still_allowed_with_git_block(self):
+        decision, _ = self._enforce("Write", {"file_path": os.path.join(self.state, "done.json")})
+        self.assertEqual(decision, "allow")
+
     def test_bash_wait_command_allowed(self):
         for cmd in WAIT_COMMANDS:
             decision, _ = self._enforce("Bash", {"command": cmd})

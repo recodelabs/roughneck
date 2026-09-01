@@ -37,6 +37,15 @@ interface EditorContextMenuProps {
   onSuggestDeletion?: () => void;
   onSuggestReplacement?: () => void;
   onSuggestInsertion?: () => void;
+  /**
+   * When the doc is in suggesting mode, PageCard supplies this so programmatic
+   * pastes from the context menu are captured as tracked additions instead of
+   * being inserted untracked. Left undefined in editing/viewing mode, where the
+   * menu falls back to a plain `insertContent`.
+   */
+  onInsertSuggestion?: (
+    content: { type: "text"; text: string } | { type: "html"; html: string },
+  ) => void;
   children: ReactNode;
 }
 
@@ -212,6 +221,7 @@ export function EditorContextMenu({
   onSuggestDeletion,
   onSuggestReplacement,
   onSuggestInsertion,
+  onInsertSuggestion,
   children,
 }: EditorContextMenuProps) {
   const [position, setPosition] = useState<MenuPosition | null>(null);
@@ -597,7 +607,11 @@ export function EditorContextMenu({
           try {
             const text = await navigator.clipboard.readText();
             if (text) {
-              editor.chain().focus().insertContent(text).run();
+              if (onInsertSuggestion) {
+                onInsertSuggestion({ type: "text", text });
+              } else {
+                editor.chain().focus().insertContent(text).run();
+              }
             }
           } finally {
             close();
@@ -606,7 +620,7 @@ export function EditorContextMenu({
         setPasteError,
         "Could not paste from the clipboard.",
       ),
-    [close, editor],
+    [close, editor, onInsertSuggestion],
   );
 
   const handlePasteMarkdown = useCallback(
@@ -618,16 +632,15 @@ export function EditorContextMenu({
           try {
             const text = await navigator.clipboard.readText();
             if (text) {
-              editor
-                .chain()
-                .focus()
-                .insertContent(
-                  toHtml(text, {
-                    resolveFileUrl: (path) => backend.resolveFileUrl(path),
-                    resolveLinkUrl,
-                  }),
-                )
-                .run();
+              const html = toHtml(text, {
+                resolveFileUrl: (path) => backend.resolveFileUrl(path),
+                resolveLinkUrl,
+              });
+              if (onInsertSuggestion) {
+                onInsertSuggestion({ type: "html", html });
+              } else {
+                editor.chain().focus().insertContent(html).run();
+              }
             }
           } finally {
             close();
@@ -636,7 +649,7 @@ export function EditorContextMenu({
         setPasteError,
         "Could not paste markdown from the clipboard.",
       ),
-    [backend, close, editor, resolveLinkUrl],
+    [backend, close, editor, onInsertSuggestion, resolveLinkUrl],
   );
 
   return (

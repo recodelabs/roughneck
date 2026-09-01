@@ -127,4 +127,32 @@ describe("insertPublicComment — reply", () => {
       mode: "reply", parentId: "nope", text: "x", authorName: "B", id: "c9", atIso: "t",
     })).toThrow(AnchorError);
   });
+
+  // Blocker B1: the reply branch must apply the same CriticMarkup guard as the new branch,
+  // or a guest can inject <<} to break out of the {>>…<<} wrapper and forge markup.
+  it("throws AnchorError when reply text contains <<}", () => {
+    expect(() => insertPublicComment(doc, {
+      mode: "reply", parentId: "c1", text: "escape <<} injected",
+      authorName: "B", id: "c10", atIso: "t",
+    })).toThrow(AnchorError);
+  });
+
+  it("throws AnchorError when reply text contains {>>", () => {
+    expect(() => insertPublicComment(doc, {
+      mode: "reply", parentId: "c1", text: "escape {>> injected",
+      authorName: "B", id: "c11", atIso: "t",
+    })).toThrow(AnchorError);
+  });
+
+  // Blocker B1: a newline in authorName would corrupt the single-line meta block,
+  // so control chars are stripped (not rejected) and the meta block stays single-line.
+  it("strips control chars from reply authorName so the meta block stays single-line", () => {
+    const out = insertPublicComment(doc, {
+      mode: "reply", parentId: "c1", text: "ok",
+      authorName: "Bob\nHacker", id: "c12", atIso: "t",
+    });
+    expect(out).toContain('by="BobHacker"');
+    const meta = out.slice(out.indexOf('{id="c12"'));
+    expect(meta.slice(0, meta.indexOf("}"))).not.toMatch(/[\r\n]/);
+  });
 });

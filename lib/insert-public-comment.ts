@@ -30,6 +30,23 @@ export class AnchorError extends Error {
 const escapeAttr = (v: string): string =>
   v.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 
+// Shared guards so the new/reply branches can't drift.
+// Guest comment text must never contain CriticMarkup comment delimiters,
+// or a guest could break out of the {>>…<<} wrapper and forge markup.
+function rejectCriticDelimiters(text: string): void {
+  if (text.includes("<<}") || text.includes("{>>")) {
+    throw new AnchorError("text contains CriticMarkup delimiters");
+  }
+}
+
+// A CR/LF (or other control char) in authorName would corrupt the single-line
+// meta block (`by="…"`), so strip control chars rather than reject — a display
+// name should be sanitized, not cause the guest's comment to fail. Length is
+// bounded by callers (MAX_NAME_LEN in lib/public-comment.ts).
+function sanitizeAuthorName(authorName: string): string {
+  // eslint-disable-next-line no-control-regex
+  return authorName.replace(/[\x00-\x1F\x7F]/g, "");
+}
 
 function metaBlock(
   id: string,
@@ -57,6 +74,11 @@ export function insertPublicComment(
   markdown: string,
   input: InsertInput,
 ): string {
+  // Guard shared by both branches: guest text must not contain CriticMarkup
+  // delimiters, and authorName must not contain control chars.
+  rejectCriticDelimiters(input.text);
+  const authorName = sanitizeAuthorName(input.authorName);
+
   if (input.mode === "new") {
     // Defense in depth: occurrence must be a positive integer (≤ 0 would leave `at` at -1,
     // causing absoluteAt to land inside the frontmatter and overwrite the --- delimiter)
@@ -64,10 +86,6 @@ export function insertPublicComment(
       throw new AnchorError("occurrence must be an integer ≥ 1");
     }
 
-    // Finding 2: Reject guest input containing CriticMarkup delimiters to prevent markup corruption
-    if (input.text.includes("<<}") || input.text.includes("{>>")) {
-      throw new AnchorError("text contains CriticMarkup delimiters");
-    }
     if (input.quote.includes("==}") || input.quote.includes("{==")) {
       throw new AnchorError("quote contains CriticMarkup delimiters");
     }
@@ -108,7 +126,7 @@ export function insertPublicComment(
 
     const absoluteAt = bodyStart + at;
     const absoluteEnd = bodyStart + matchEnd;
-    const wrapped = `{==${input.quote}==}${commentBlock(input.text, input.id, input.authorName, input.atIso)}`;
+    const wrapped = `{==${input.quote}==}${commentBlock(input.text, input.id, authorName, input.atIso)}`;
     return (
       markdown.slice(0, absoluteAt) + wrapped + markdown.slice(absoluteEnd)
     );
@@ -124,7 +142,7 @@ export function insertPublicComment(
   const block = commentBlock(
     input.text,
     input.id,
-    input.authorName,
+    authorName,
     input.atIso,
     input.parentId,
   );
